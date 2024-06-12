@@ -36,7 +36,7 @@ class FeatureExtractor(nn.Module):
 
         if Path(pretrained_weights).is_file():
             if verbose:
-                print("Loading pretrained weights for patch-level Transformer")
+                print("Loading pretrained weights for ViT-S")
             state_dict = torch.load(pretrained_weights, map_location="cpu")
             if checkpoint_key is not None and checkpoint_key in state_dict:
                 if verbose:
@@ -109,7 +109,7 @@ class FeatureAggregator(nn.Module):
         )
 
         if pretrained_weights and Path(pretrained_weights).is_file():
-            print("Loading pretrained weights for region-level Transformer...")
+            print("Loading pretrained weights for HViT-XS")
             state_dict = torch.load(pretrained_weights, map_location="cpu")
             if checkpoint_key is not None and checkpoint_key in state_dict:
                 print(f"Take key {checkpoint_key} in provided checkpoint dict")
@@ -189,14 +189,6 @@ class FeatureAggregator(nn.Module):
         logits = self.classifier(x_wsi)
 
         return logits
-
-    def relocate(self, device):
-        self.vit = self.vit.to(device)
-        self.global_phi = self.global_phi.to(device)
-        self.global_transformer = self.global_transformer.to(device)
-        self.global_attn_pool = self.global_attn_pool.to(device)
-        self.global_rho = self.global_rho.to(device)
-        self.classifier = self.classifier.to(device)
 
     def __repr__(self) -> str:
         num_params = 0

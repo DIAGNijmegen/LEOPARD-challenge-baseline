@@ -20,7 +20,6 @@ Happy programming!
 import os
 import torch
 
-from glob import glob
 from pathlib import Path
 
 from source.model import HierarchicalViT
@@ -39,31 +38,25 @@ def run():
     print_directory_contents(INPUT_PATH)
 
     # instantiate the algorithm
-    algorithm = HierarchicalViT()
-
-    # forward pass
-    risk = algorithm.process(
+    feature_extractor_weights = Path(RESOURCE_PATH, "feature_extractor.pt")
+    feature_aggregator_weights = Path(RESOURCE_PATH, "feature_aggregator.pt")
+    algorithm = HierarchicalViT(
+        feature_extractor_weights,
+        feature_aggregator_weights,
         spacing=0.5,
         region_size=2048,
+        backend="asap",
     )
 
-    # convert risk to years
-    overall_survival_years = algorithm.postprocess(risk)
-
-    # save output
-    algorithm.write_outputs(overall_survival_years)
+    # forward pass
+    predictions = algorithm.process()
+    print(predictions.head())
 
     # print contents of output folder
     print("output folder contents:")
     print_directory_contents(OUTPUT_PATH)
 
     return 0
-
-
-def get_image_file_path(*, location):
-    input_files = glob(str(location / "*.tiff")) + \
-        glob(str(location / "*.mha"))
-    return input_files[0]
 
 
 def print_directory_contents(path):

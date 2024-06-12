@@ -1,5 +1,6 @@
 import os
 import cv2
+import tqdm
 import numpy as np
 import wholeslidedata as wsd
 import multiprocessing as mp
@@ -22,9 +23,9 @@ class WholeSlideImage(object):
     def __init__(
         self,
         path: Path,
-        spacing: Optional[float] = None,
         mask_path: Optional[Path] = None,
-        downsample: int = 32,
+        spacing: Optional[float] = None,
+        downsample: int = 64,
         backend: str = "asap"
     ):
         """
@@ -39,17 +40,18 @@ class WholeSlideImage(object):
 
         self.spacing = spacing # manually set spacing at level 0
         self.spacings = self.get_spacings()
-
-        self.mask_path = mask_path
-        if mask_path is not None:
-            self.mask = wsd.WholeSlideImage(mask_path, backend=backend)
-            self.seg_level = self.load_segmentation(downsample)
-        else:
-            self.seg_level = self.segment_tissue(downsample)
-
         self.level_dimensions = self.wsi.shapes
         self.level_downsamples = self.get_downsamples()
         self.backend = backend
+
+        self.mask_path = mask_path
+        if mask_path is not None:
+            tqdm.tqdm.write(f"Loading mask: {mask_path}")
+            self.mask = wsd.WholeSlideImage(mask_path, backend=backend)
+            self.seg_level = self.load_segmentation(downsample)
+        else:
+            tqdm.tqdm.write("Segmenting tissue")
+            self.seg_level = self.segment_tissue(downsample)
 
         self.contours_tissue = None
         self.contours_tumor = None
@@ -182,18 +184,16 @@ class WholeSlideImage(object):
         self,
         target_spacing,
         target_patch_size,
-        seg_level,
         patching_params: Dict[str, int] = {"overlap": 0., "drop_holes": True, "tissue_thresh": 0.01, "use_padding": True},
-        filter_params: Dict[str, int] = {"ref_patch_size": 512, "a_t": 1, "a_h": 1},
+        filter_params: Dict[str, int] = {"ref_patch_size": 256, "a_t": 4, "a_h": 2, "max_n_holes": 8},
         num_workers: int = 1,
     ):
-        contours, holes = self.detect_contours(target_spacing, seg_level, filter_params)
+        contours, holes = self.detect_contours(target_spacing, filter_params)
         running_x_coords, running_y_coords, patch_level, resize_factor = self.process_contours(
             contours,
             holes,
             spacing=target_spacing,
             patch_size=target_patch_size,
-            seg_level=seg_level,
             overlap=patching_params["overlap"],
             drop_holes=patching_params["drop_holes"],
             tissue_thresh=patching_params["tissue_thresh"],
@@ -204,7 +204,7 @@ class WholeSlideImage(object):
         return patch_coordinates, patch_level, resize_factor
 
     def detect_contours(
-        self, target_spacing: float, seg_level: int, filter_params: Dict[str, int],
+        self, target_spacing: float, filter_params: Dict[str, int],
     ):
         def _filter_contours(contours, hierarchy, filter_params):
             """
@@ -259,7 +259,7 @@ class WholeSlideImage(object):
             target_spacing, ignore_warning=True
         )
         current_scale = self.level_downsamples[spacing_level]
-        target_scale = self.level_downsamples[seg_level]
+        target_scale = self.level_downsamples[self.seg_level]
         scale = tuple(a / b for a, b in zip(target_scale, current_scale))
         ref_patch_size = filter_params["ref_patch_size"]
         scaled_ref_patch_area = int(ref_patch_size**2 / (scale[0] * scale[1]))
@@ -326,7 +326,6 @@ class WholeSlideImage(object):
         holes,
         spacing: float = 0.5,
         patch_size: int = 256,
-        seg_level: int = -1,
         overlap: float = 0.0,
         drop_holes: bool = True,
         tissue_thresh: float = 0.01,
@@ -344,7 +343,6 @@ class WholeSlideImage(object):
                 holes[i],
                 spacing,
                 patch_size,
-                seg_level,
                 overlap,
                 drop_holes,
                 tissue_thresh,
@@ -361,7 +359,6 @@ class WholeSlideImage(object):
         self,
         contour,
         contour_holes,
-        seg_level: int,
         spacing: float,
         patch_size: int = 256,
         overlap: float = 0.0,
@@ -380,8 +377,8 @@ class WholeSlideImage(object):
         patch_size_resized = patch_size * resize_factor
         step_size = int(patch_size_resized * (1.0 - overlap))
 
-        if cont is not None:
-            start_x, start_y, w, h = cv2.boundingRect(cont)
+        if contour is not None:
+            start_x, start_y, w, h = cv2.boundingRect(contour)
         else:
             start_x, start_y, w, h = (
                 0,
@@ -410,7 +407,7 @@ class WholeSlideImage(object):
             stop_y = min(start_y + h, img_h - ref_patch_size[1] + 1)
             stop_x = min(start_x + w, img_w - ref_patch_size[0] + 1)
 
-        scale = self.level_downsamples[seg_level]
+        scale = self.level_downsamples[self.seg_level]
         cont = self.scaleContourDim([contour], (1.0 / scale[0], 1.0 / scale[1]))[0]
         cont_check_fn = isInContour_pct(
             contour=cont,
