@@ -36,6 +36,7 @@ def run():
     # print contents of input folder
     print("input folder contents:")
     print_directory_contents(INPUT_PATH)
+    print("=+=" * 10)
 
     # instantiate the algorithm
     feature_extractor_weights = Path(RESOURCE_PATH, "feature_extractor.pt")
@@ -50,7 +51,9 @@ def run():
 
     # forward pass
     predictions = algorithm.process()
+    print("=+=" * 10)
     print(predictions.head())
+    print("=+=" * 10)
 
     # print contents of output folder
     print("output folder contents:")
@@ -78,7 +81,7 @@ def _show_torch_cuda_info():
         print(
             f"\tcurrent device: { (current_device := torch.cuda.current_device())}")
         print(
-            f"\tproperties: {torch.cuda.get_device_properties(current_device)}")
+            f"\tproperties: {torch.cuda.get_device_properties(current_device).name}")
     print("=+=" * 10)
 
 

@@ -336,22 +336,29 @@ class WholeSlideImage(object):
         patch_level = None
         resize_factor = None
 
-        for i, cont in enumerate(contours):
+        with tqdm.tqdm(
+            contours,
+            desc="Processing tissue blobs",
+            unit=" contour",
+            total=len(contours),
+            leave=False,
+        ) as t:
+            for i, cont in enumerate(t):
 
-            x_coords, y_coords, patch_level, resize_factor = self.process_contour(
-                cont,
-                holes[i],
-                spacing,
-                patch_size,
-                overlap,
-                drop_holes,
-                tissue_thresh,
-                use_padding,
-                num_workers=num_workers,
-            )
-            if len(x_coords) > 0:
-                running_x_coords.extend(x_coords)
-                running_y_coords.extend(y_coords)
+                x_coords, y_coords, patch_level, resize_factor = self.process_contour(
+                    cont,
+                    holes[i],
+                    spacing,
+                    patch_size,
+                    overlap,
+                    drop_holes,
+                    tissue_thresh,
+                    use_padding,
+                    num_workers=num_workers,
+                )
+                if len(x_coords) > 0:
+                    running_x_coords.extend(x_coords)
+                    running_y_coords.extend(y_coords)
 
         return running_x_coords, running_y_coords, patch_level, resize_factor
 

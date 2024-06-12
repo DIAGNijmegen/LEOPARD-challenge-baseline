@@ -1,11 +1,10 @@
 import tqdm
-import time
 import torch
 import pandas as pd
 
 from pathlib import Path
 
-from source.utils import sort_coords
+from source.utils import sort_coords, track_vram_usage
 from source.wsi import WholeSlideImage
 from source.dataset import PatchDataset
 from source.components import FeatureExtractor, FeatureAggregator
@@ -40,6 +39,7 @@ class HierarchicalViT():
             mask_attn=False,
         ).to(self.device, non_blocking=True)
         self.feature_extractor.eval()
+        print("=+=" * 10)
 
         self.feature_aggregator = FeatureAggregator(
             feature_aggregator_weights,
@@ -49,32 +49,26 @@ class HierarchicalViT():
             mask_attn=False,
         ).to(self.device, non_blocking=True)
         self.feature_aggregator.eval()
+        print("=+=" * 10)
 
     def load_inputs(self):
         """
         Read from /input/
         """
-        case_list = [fp for fp in Path("/input/wsi").glob("*.tif")]
-        mask_list = [fp for fp in Path("/input/mask").glob("*.tif")]
-        coord_list = []
-        patch_level_list = []
-        resize_factor_list = []
-        with tqdm.tqdm(
-            zip(case_list, mask_list),
-            desc="Extracting region coordinates",
-            unit=" case",
-            total=len(case_list),
-            leave=True,
-        ) as t:
-            for wsi_fp, mask_fp in t:
-                tqdm.tqdm.write(f"Processing {wsi_fp.stem}")
-                wsi = WholeSlideImage(wsi_fp, mask_fp)
-                coordinates, patch_level, resize_factor = wsi.get_patch_coordinates(self.spacing, self.region_size)
-                sorted_coordinates = sort_coords(coordinates)
-                coord_list.append(sorted_coordinates)
-                patch_level_list.append(patch_level)
-                resize_factor_list.append(resize_factor)
-        return case_list, coord_list, patch_level_list, resize_factor_list
+        case_list = sorted([fp for fp in Path("/input/wsi").glob("*.tif")])
+        mask_list = sorted([fp for fp in Path("/input/mask").glob("*.tif")])
+        case_dict = {fp.stem: fp for fp in case_list}
+        mask_dict = {fp.stem.replace("_tissue", ""): fp for fp in mask_list}
+        common_keys = case_dict.keys() & mask_dict.keys()
+        sorted_case_list = [case_dict[key] for key in sorted(common_keys)]
+        sorted_mask_list = [mask_dict[key] for key in sorted(common_keys)]
+        return sorted_case_list, sorted_mask_list
+
+    def extract_coordinates(self, wsi_fp, mask_fp):
+        wsi = WholeSlideImage(wsi_fp, mask_fp)
+        coordinates, patch_level, resize_factor = wsi.get_patch_coordinates(self.spacing, self.region_size)
+        sorted_coordinates = sort_coords(coordinates)
+        return sorted_coordinates, patch_level, resize_factor
 
     def extract_slide_feature(self, wsi_fp, coord, patch_level, factor):
         dataset = PatchDataset(wsi_fp, coord, patch_level, factor, self.region_size, self.backend)
@@ -100,7 +94,7 @@ class HierarchicalViT():
             feature = feature.unsqueeze(0)
         return feature
 
-    def write_outputs(self, case_list, predictions):
+    def write_outputs(self, case_list, predictions, vram_consumption):
         """
         Write to /output/
         Check https://grand-challenge.org/algorithms/interfaces/
@@ -108,37 +102,41 @@ class HierarchicalViT():
         df = pd.DataFrame({
             "slide_id": [fp.stem for fp in case_list],
             "overall_survival_years": predictions,
+            "vram": vram_consumption,
         })
         df.to_csv("/output/predictions.csv", index=False)
         return df
 
     def predict(self, feature):
-        logit = self.feature_aggregator(feature)
+        logit, vram = track_vram_usage(self.feature_aggregator, feature)
         hazard = torch.sigmoid(logit)
         surv = torch.cumprod(1 - hazard, dim=1)
         risk = -torch.sum(surv, dim=1).detach().item()
-        return risk
+        return risk, vram
 
     def process(self):
         """
         Read inputs from /input, process with your algorithm and write to /output
         """
-        case_list, coord_list, patch_level_list, resize_factor_list = self.load_inputs()
-        time.sleep(1)
+        case_list, mask_list = self.load_inputs()
+        vram_consumption = []
         predictions = []
         with tqdm.tqdm(
-            zip(case_list, coord_list, patch_level_list, resize_factor_list),
-            desc="Extracting case-level features",
+            zip(case_list, mask_list),
+            desc="Inference",
             unit=" case",
             total=len(case_list),
             leave=True,
         ) as t:
-            for wsi_fp, coord, level, factor in t:
+            for wsi_fp, mask_fp in t:
+                tqdm.tqdm.write(f"Processing {wsi_fp.stem}")
+                coord, level, factor = self.extract_coordinates(wsi_fp, mask_fp)
                 feature = self.extract_slide_feature(wsi_fp, coord, level, factor)
-                risk = self.predict(feature)
+                risk, vram = self.predict(feature)
                 overall_survival = self.postprocess(risk)
                 predictions.append(overall_survival)
-        prediction_df = self.write_outputs(case_list, predictions)
+                vram_consumption.append(vram)
+        prediction_df = self.write_outputs(case_list, predictions, vram_consumption)
         return prediction_df
 
     def postprocess(self, risk):
