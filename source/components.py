@@ -73,7 +73,7 @@ class FeatureExtractor(nn.Module):
         x = rearrange(x, "b c p1 p2 w h -> (b p1 p2) c w h")  # [num_patches, 3, ps, ps]
 
         patch_feature = (
-            self.vit(x, mask=mask_mini_patch).detach().cpu()
+            self.vit(x, mask=mask_mini_patch).detach()
         )  # [num_patches, 384]
         return patch_feature
 

@@ -19,8 +19,8 @@ class HierarchicalViT():
         spacing: float,
         region_size: int,
         nbins: int = 4,
-        batch_size: int = 2,
-        num_workers: int = 2,
+        batch_size: int = 1,
+        num_workers: int = 1,
         backend="openslide",
     ):
 
@@ -31,14 +31,15 @@ class HierarchicalViT():
         self.num_workers = num_workers
         self.backend = backend
 
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         self.feature_extractor = FeatureExtractor(
             feature_extractor_weights,
             patch_size=256,
             mini_patch_size=16,
             mask_attn=False,
-        )
+        ).to(self.device, non_blocking=True)
         self.feature_extractor.eval()
-        self.feature_extractor = self.feature_extractor.to("cuda")
 
         self.feature_aggregator = FeatureAggregator(
             feature_aggregator_weights,
@@ -46,9 +47,8 @@ class HierarchicalViT():
             region_size=region_size,
             patch_size=256,
             mask_attn=False,
-        )
+        ).to(self.device, non_blocking=True)
         self.feature_aggregator.eval()
-        self.feature_aggregator = self.feature_aggregator.to("cuda")
 
     def load_inputs(self):
         """
@@ -83,11 +83,12 @@ class HierarchicalViT():
         with tqdm.tqdm(
             dataloader,
             desc=f"Processing {wsi_fp.stem}",
-            unit=" batch",
+            unit=" region",
+            unit_scale=self.batch_size,
             leave=False,
         ) as t:
             for imgs in t:
-                imgs = imgs.to("cuda", non_blocking=True)
+                imgs = imgs.to(self.device, non_blocking=True)
                 batch_features = self.extract_patch_feature(imgs)
                 patch_features.append(batch_features)
         slide_feature = torch.cat(patch_features, dim=0)
@@ -96,6 +97,7 @@ class HierarchicalViT():
     def extract_patch_feature(self, patch):
         with torch.no_grad():
             feature = self.feature_extractor(patch)
+            feature = feature.unsqueeze(0)
         return feature
 
     def write_outputs(self, case_list, predictions):
@@ -111,8 +113,11 @@ class HierarchicalViT():
         return df
 
     def predict(self, feature):
-        output = self.feature_aggregator(feature)
-        return output
+        logit = self.feature_aggregator(feature)
+        hazard = torch.sigmoid(logit)
+        surv = torch.cumprod(1 - hazard, dim=1)
+        risk = -torch.sum(surv, dim=1).detach().item()
+        return risk
 
     def process(self):
         """
@@ -130,7 +135,6 @@ class HierarchicalViT():
         ) as t:
             for wsi_fp, coord, level, factor in t:
                 feature = self.extract_slide_feature(wsi_fp, coord, level, factor)
-                tqdm.tqdm.write(f"feature.shape: {feature.shape}")
                 risk = self.predict(feature)
                 overall_survival = self.postprocess(risk)
                 predictions.append(overall_survival)
