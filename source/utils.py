@@ -21,4 +21,5 @@ def track_vram_usage(model, sample):
     final_memory = torch.cuda.memory_allocated()
     # memory used for this sample
     memory_used = final_memory - initial_memory
-    return output, memory_used
+    memory_used_gb = memory_used / (1024 ** 3)
+    return output, memory_used_gb

@@ -47,6 +47,8 @@ def run():
         spacing=0.5,
         region_size=2048,
         backend="asap",
+        batch_size=1,
+        num_workers=1,
     )
 
     # forward pass

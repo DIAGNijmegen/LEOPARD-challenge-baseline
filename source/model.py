@@ -74,17 +74,20 @@ class HierarchicalViT():
         dataset = PatchDataset(wsi_fp, coord, patch_level, factor, self.region_size, self.backend)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=False, pin_memory=True)
         patch_features = []
-        with tqdm.tqdm(
-            dataloader,
-            desc=f"Processing {wsi_fp.stem}",
-            unit=" region",
-            unit_scale=self.batch_size,
-            leave=False,
-        ) as t:
-            for imgs in t:
-                imgs = imgs.to(self.device, non_blocking=True)
-                batch_features = self.extract_patch_feature(imgs)
-                patch_features.append(batch_features)
+        with torch.no_grad():
+            with tqdm.tqdm(
+                dataloader,
+                desc=f"Processing {wsi_fp.stem}",
+                unit=" region",
+                unit_scale=self.batch_size,
+                leave=False,
+            ) as t:
+                for imgs in t:
+                    imgs = imgs.to(self.device, non_blocking=True)
+                    batch_features = self.extract_patch_feature(imgs)
+                    batch_features = batch_features.cpu()
+                    patch_features.append(batch_features)
+                    torch.cuda.empty_cache()
         slide_feature = torch.cat(patch_features, dim=0)
         return slide_feature
 
@@ -132,6 +135,7 @@ class HierarchicalViT():
                 tqdm.tqdm.write(f"Processing {wsi_fp.stem}")
                 coord, level, factor = self.extract_coordinates(wsi_fp, mask_fp)
                 feature = self.extract_slide_feature(wsi_fp, coord, level, factor)
+                feature = feature.to(self.device, non_blocking=True)
                 risk, vram = self.predict(feature)
                 overall_survival = self.postprocess(risk)
                 predictions.append(overall_survival)
