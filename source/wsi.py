@@ -85,10 +85,10 @@ class WholeSlideImage(object):
             target_downsample, return_tol_status=True
         )
         level_spacing = self.get_level_spacing(level)
-        resize_factor = int(target_spacing / level_spacing)
+        resize_factor = int(round(target_spacing / level_spacing, 0))
         if above_tol and not ignore_warning:
             print(
-                f"WARNING! The natural spacing ({round(self.spacings[level],4)}) closest to the target spacing ({round(target_spacing,4)}) was more than {tol*100:.1f}% appart ({self.name})."
+                f"WARNING! The natural spacing ({resize_factor*self.spacings[level]:.4f}) closest to the target spacing ({target_spacing:.4f}) was more than {tol*100:.1f}% appart ({self.name})."
             )
         return level, resize_factor
 
@@ -283,8 +283,6 @@ class WholeSlideImage(object):
         contours = self.scaleContourDim(foreground_contours, target_scale)
         holes = self.scaleHolesDim(hole_contours, target_scale)
         return contours, holes
-
-
 
     @staticmethod
     def isInHoles(holes, pt, patch_size):
