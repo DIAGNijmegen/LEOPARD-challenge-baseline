@@ -19,6 +19,7 @@ Happy programming!
 """
 import os
 import torch
+import argparse
 
 from pathlib import Path
 
@@ -29,7 +30,7 @@ OUTPUT_PATH = Path("/output")
 RESOURCE_PATH = Path("resources")
 
 
-def run():
+def run(args):
 
     _show_torch_cuda_info()
 
@@ -39,8 +40,8 @@ def run():
     print("=+=" * 10)
 
     # instantiate the algorithm
-    feature_extractor_weights = Path(RESOURCE_PATH, "feature_extractor.pt")
-    feature_aggregator_weights = Path(RESOURCE_PATH, "feature_aggregator.pt")
+    feature_extractor_weights = Path(RESOURCE_PATH, f"feature_extractor.pt")
+    feature_aggregator_weights = Path(RESOURCE_PATH, f"feature_aggregator_{args.fold}.pt")
     algorithm = HierarchicalViT(
         feature_extractor_weights,
         feature_aggregator_weights,
@@ -89,4 +90,8 @@ def _show_torch_cuda_info():
 
 if __name__ == "__main__":
 
-    raise SystemExit(run())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--fold", type=int, default=0)
+    args = parser.parse_args()
+
+    raise SystemExit(run(args))

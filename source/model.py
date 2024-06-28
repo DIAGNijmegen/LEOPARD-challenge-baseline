@@ -73,6 +73,14 @@ class HierarchicalViT():
     def extract_slide_feature(self, wsi_fp, coord, patch_level, factor):
         dataset = PatchDataset(wsi_fp, coord, patch_level, factor, self.region_size, self.backend)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=False, pin_memory=True)
+        # import wholeslidedata as wsd
+        # from PIL import Image
+        # from torchvision import transforms
+        # wsi = wsd.WholeSlideImage(wsi_fp, backend=self.backend)
+        # patch_spacing = wsi.spacings[patch_level]
+        # width = self.region_size * factor
+        # height = self.region_size * factor
+        # dataloader = coord
         patch_features = []
         with torch.no_grad():
             with tqdm.tqdm(
@@ -82,6 +90,14 @@ class HierarchicalViT():
                 unit_scale=self.batch_size,
                 leave=False,
             ) as t:
+                # for x, y in t:
+                #     patch = wsi.get_patch(x, y, width, height, spacing=patch_spacing, center=False)
+                #     pil_patch = Image.fromarray(patch).convert("RGB")
+                #     if factor != 1:
+                #         assert width % self.region_size == 0, f"width ({width}) is not divisible by region_size ({self.region_size})"
+                #         pil_patch = pil_patch.resize((self.region_size, self.region_size))
+                #     imgs = transforms.functional.to_tensor(pil_patch)
+                #     imgs = imgs.unsqueeze(0)
                 for imgs in t:
                     imgs = imgs.to(self.device, non_blocking=True)
                     batch_features = self.extract_patch_feature(imgs)
@@ -111,10 +127,11 @@ class HierarchicalViT():
         return df
 
     def predict(self, feature):
-        logit, vram = track_vram_usage(self.feature_aggregator, feature)
-        hazard = torch.sigmoid(logit)
-        surv = torch.cumprod(1 - hazard, dim=1)
-        risk = -torch.sum(surv, dim=1).detach().item()
+        with torch.no_grad():
+            logit, vram = track_vram_usage(self.feature_aggregator, feature)
+            hazard = torch.sigmoid(logit)
+            surv = torch.cumprod(1 - hazard, dim=1)
+            risk = -torch.sum(surv, dim=1).detach().item()
         return risk, vram
 
     def process(self):

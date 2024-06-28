@@ -22,7 +22,6 @@ class FeatureExtractor(nn.Module):
         verbose: bool = True,
     ):
         super(FeatureExtractor, self).__init__()
-        checkpoint_key = "teacher"
 
         self.ps = patch_size
 
@@ -38,14 +37,6 @@ class FeatureExtractor(nn.Module):
             if verbose:
                 print("Loading pretrained weights for ViT-S")
             state_dict = torch.load(pretrained_weights, map_location="cpu")
-            if checkpoint_key is not None and checkpoint_key in state_dict:
-                if verbose:
-                    print(f"Take key {checkpoint_key} in provided checkpoint dict")
-                state_dict = state_dict[checkpoint_key]
-            # remove `module.` prefix
-            state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
-            # remove `backbone.` prefix induced by multicrop wrapper
-            state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
             state_dict, msg = update_state_dict(self.vit.state_dict(), state_dict)
             self.vit.load_state_dict(state_dict, strict=False)
             if verbose:
@@ -93,10 +84,9 @@ class FeatureAggregator(nn.Module):
         num_register_tokens: int = 0,
     ):
         super(FeatureAggregator, self).__init__()
+        self.pretrained_weights = pretrained_weights
         self.npatch = int(region_size // patch_size)
         self.num_register_tokens = num_register_tokens
-
-        checkpoint_key = "teacher"
 
         self.vit = vit4k_xs(
             img_size=region_size,
@@ -107,28 +97,6 @@ class FeatureAggregator(nn.Module):
             img_size_pretrained=region_size,
             num_register_tokens=num_register_tokens,
         )
-
-        if pretrained_weights and Path(pretrained_weights).is_file():
-            print("Loading pretrained weights for HViT-XS")
-            state_dict = torch.load(pretrained_weights, map_location="cpu")
-            if checkpoint_key is not None and checkpoint_key in state_dict:
-                print(f"Take key {checkpoint_key} in provided checkpoint dict")
-                state_dict = state_dict[checkpoint_key]
-            # remove `module.` prefix
-            state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
-            # remove `backbone.` prefix induced by multicrop wrapper
-            state_dict = {k.replace("backbone.", ""): v for k, v in state_dict.items()}
-            state_dict, msg = update_state_dict(
-                self.vit.state_dict(), state_dict
-            )
-            self.vit.load_state_dict(state_dict, strict=False)
-            print(f"Pretrained weights found at {pretrained_weights}")
-            print(msg)
-
-        elif pretrained_weights:
-            print(
-                f"{pretrained_weights} doesnt exist ; please provide path to existing file"
-            )
 
         # Global Aggregation
         self.global_phi = nn.Sequential(
@@ -153,6 +121,8 @@ class FeatureAggregator(nn.Module):
         )
 
         self.classifier = nn.Linear(output_embed_dim, num_classes)
+
+        self.load_weights()
 
     def forward(self, x, pct: Optional[torch.Tensor] = None, pct_thresh: float = 0.0):
         mask_patch = None
@@ -189,6 +159,17 @@ class FeatureAggregator(nn.Module):
         logits = self.classifier(x_wsi)
 
         return logits
+
+    def load_weights(self):
+        if self.pretrained_weights and Path(self.pretrained_weights).is_file():
+            print("Loading pretrained weights for HViT-XS")
+            state_dict = torch.load(self.pretrained_weights, map_location="cpu")
+            state_dict, msg = update_state_dict(self.state_dict(), state_dict)
+            self.load_state_dict(state_dict, strict=False)
+            print(f"Pretrained weights found at {self.pretrained_weights}")
+            print(msg)
+        else:
+            print(f"{self.pretrained_weights} doesn't exist; please provide path to an existing file")
 
     def __repr__(self) -> str:
         num_params = 0

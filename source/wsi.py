@@ -184,7 +184,7 @@ class WholeSlideImage(object):
         self,
         target_spacing,
         target_patch_size,
-        patching_params: Dict[str, int] = {"overlap": 0., "drop_holes": True, "tissue_thresh": 0.01, "use_padding": True},
+        patching_params: Dict[str, int] = {"overlap": 0., "drop_holes": False, "tissue_thresh": 0.01, "use_padding": True},
         filter_params: Dict[str, int] = {"ref_patch_size": 256, "a_t": 4, "a_h": 2, "max_n_holes": 8},
         num_workers: int = 1,
     ):
