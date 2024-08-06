@@ -23,11 +23,12 @@ import argparse
 
 from pathlib import Path
 
-from source.model import HierarchicalViT
+from source.model import MIL
+from source.components import UNI, HierarchicalViT
 
 INPUT_PATH = Path("/input")
 OUTPUT_PATH = Path("/output")
-RESOURCE_PATH = Path("resources")
+RESOURCE_PATH = Path("/resources")
 
 
 def run(args):
@@ -39,17 +40,32 @@ def run(args):
     print_directory_contents(INPUT_PATH)
     print("=+=" * 10)
 
-    # instantiate the algorithm
+    # set number of bins
+    nbins = 4
+
+    # instantiate feature extractor
     feature_extractor_weights = Path(RESOURCE_PATH, f"feature_extractor.pt")
-    feature_aggregator_weights = Path(RESOURCE_PATH, f"feature_aggregator_{args.fold}.pt")
-    algorithm = HierarchicalViT(
-        feature_extractor_weights,
+    feature_extractor = UNI(feature_extractor_weights)
+
+    # instantiate feature aggregator
+    feature_aggregator_weights = Path(RESOURCE_PATH, f"feature_aggregator_{args.region_size}_{args.fold}.pt")
+    feature_aggregator = HierarchicalViT(
         feature_aggregator_weights,
+        num_classes=nbins,
+        region_size=args.region_size,
+        input_embed_dim=args.features_dim,
+    )
+
+    # instantiate the algorithm
+    algorithm = MIL(
+        feature_extractor,
+        feature_aggregator,
         spacing=0.5,
-        region_size=2048,
+        region_size=args.region_size,
         backend="asap",
         batch_size=1,
         num_workers=1,
+        nfeats_max=args.nfeats_max,
     )
 
     # forward pass
@@ -92,6 +108,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--fold", type=int, default=0)
+    parser.add_argument("--region_size", type=int)
+    parser.add_argument("--features_dim", type=int, default=384)
+    parser.add_argument("--nfeats_max", type=int)
     args = parser.parse_args()
 
     raise SystemExit(run(args))

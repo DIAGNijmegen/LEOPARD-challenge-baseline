@@ -1,3 +1,4 @@
+import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,12 +6,13 @@ import torch.nn.functional as F
 from pathlib import Path
 from typing import Optional
 from einops import rearrange
+from torchvision.transforms import CenterCrop
 
 from source.vision_transformer import vit_small, vit4k_xs
 from source.model_utils import Attn_Net_Gated, update_state_dict
 
 
-class FeatureExtractor(nn.Module):
+class CustomViT(nn.Module):
     def __init__(
         self,
         pretrained_weights: str,
@@ -21,7 +23,7 @@ class FeatureExtractor(nn.Module):
         num_register_tokens: int = 0,
         verbose: bool = True,
     ):
-        super(FeatureExtractor, self).__init__()
+        super(CustomViT, self).__init__()
 
         self.ps = patch_size
 
@@ -69,12 +71,62 @@ class FeatureExtractor(nn.Module):
         return patch_feature
 
 
-class FeatureAggregator(nn.Module):
+class UNI(nn.Module):
     def __init__(
         self,
         pretrained_weights: str,
-        num_classes: int = 2,
-        region_size: int = 4096,
+        patch_size: int = 256,
+        mini_patch_size: int = 16,
+        verbose: bool = True,
+    ):
+        super(UNI, self).__init__()
+
+        self.ps = patch_size
+        self.center_crop = CenterCrop(224)
+        assert mini_patch_size == 16, "mini_patch_size must be 16"
+        self.vit = timm.create_model("vit_large_patch16_224", img_size=224, patch_size=16, init_values=1e-5, num_classes=0, dynamic_img_size=True)
+
+        if Path(pretrained_weights).is_file():
+            if verbose:
+                print("Loading pretrained weights")
+            state_dict = torch.load(pretrained_weights, map_location="cpu")
+            state_dict, msg = update_state_dict(self.vit.state_dict(), state_dict)
+            self.vit.load_state_dict(state_dict, strict=True)
+            if verbose:
+                print(f"Pretrained weights found at {pretrained_weights}")
+                print(msg)
+
+        elif verbose:
+            print(
+                f"{pretrained_weights} doesnt exist ; please provide path to existing file"
+            )
+
+        for param in self.vit.parameters():
+            param.requires_grad = False
+
+    def forward(self, x, pct: Optional[torch.Tensor] = None, pct_thresh: float = 0.0):
+        # x = [1, 3, region_size, region_size]
+        x = x.unfold(2, self.ps, self.ps).unfold(
+            3, self.ps, self.ps
+        )  # [1, 3, npatch, region_size, ps] -> [1, 3, npatch, npatch, ps, ps]
+        x = rearrange(x, "b c p1 p2 w h -> (b p1 p2) c w h")  # [num_patches, 3, ps, ps]
+
+        # apply center crop to fit expected input size
+        cropped_x = torch.stack([self.center_crop(patch) for patch in x])
+
+        patch_feature = (
+            self.vit(cropped_x).detach().cpu()
+        )  # [num_patches, 1024]
+
+        return patch_feature
+
+
+class HierarchicalViT(nn.Module):
+    def __init__(
+        self,
+        pretrained_weights: str,
+        num_classes: int,
+        region_size: int,
         patch_size: int = 256,
         input_embed_dim: int = 384,
         hidden_embed_dim: int = 192,
@@ -83,7 +135,7 @@ class FeatureAggregator(nn.Module):
         mask_attn: bool = False,
         num_register_tokens: int = 0,
     ):
-        super(FeatureAggregator, self).__init__()
+        super(HierarchicalViT, self).__init__()
         self.pretrained_weights = pretrained_weights
         self.npatch = int(region_size // patch_size)
         self.num_register_tokens = num_register_tokens

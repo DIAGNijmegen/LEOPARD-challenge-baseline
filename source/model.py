@@ -1,53 +1,46 @@
 import tqdm
 import torch
 import pandas as pd
+import torch.nn as nn
+import wholeslidedata as wsd
 
+from PIL import Image
 from pathlib import Path
+from typing import Optional
+from torchvision import transforms
 
 from source.utils import sort_coords, track_vram_usage
 from source.wsi import WholeSlideImage
 from source.dataset import PatchDataset
-from source.components import FeatureExtractor, FeatureAggregator
 
 
-class HierarchicalViT():
+class MIL():
     def __init__(
         self,
-        feature_extractor_weights: str,
-        feature_aggregator_weights: str,
+        feature_extractor: nn.Module,
+        feature_aggregator: nn.Module,
         spacing: float,
         region_size: int,
-        nbins: int = 4,
         batch_size: int = 1,
         num_workers: int = 1,
-        backend="openslide",
+        backend: str = "openslide",
+        nfeats_max: Optional[int] = None,
     ):
 
         self.spacing = spacing
         self.region_size = region_size
-        self.nbins = nbins
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.backend = backend
+        self.nfeats_max = nfeats_max
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        self.feature_extractor = FeatureExtractor(
-            feature_extractor_weights,
-            patch_size=256,
-            mini_patch_size=16,
-            mask_attn=False,
-        ).to(self.device, non_blocking=True)
+        self.feature_extractor = feature_extractor.to(self.device, non_blocking=True)
         self.feature_extractor.eval()
         print("=+=" * 10)
 
-        self.feature_aggregator = FeatureAggregator(
-            feature_aggregator_weights,
-            num_classes=nbins,
-            region_size=region_size,
-            patch_size=256,
-            mask_attn=False,
-        ).to(self.device, non_blocking=True)
+        self.feature_aggregator = feature_aggregator.to(self.device, non_blocking=True)
         self.feature_aggregator.eval()
         print("=+=" * 10)
 
@@ -70,17 +63,35 @@ class HierarchicalViT():
         sorted_coordinates = sort_coords(coordinates)
         return sorted_coordinates, patch_level, resize_factor
 
-    def extract_slide_feature(self, wsi_fp, coord, patch_level, factor):
-        dataset = PatchDataset(wsi_fp, coord, patch_level, factor, self.region_size, self.backend)
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=False, pin_memory=True)
-        # import wholeslidedata as wsd
-        # from PIL import Image
-        # from torchvision import transforms
-        # wsi = wsd.WholeSlideImage(wsi_fp, backend=self.backend)
-        # patch_spacing = wsi.spacings[patch_level]
-        # width = self.region_size * factor
-        # height = self.region_size * factor
-        # dataloader = coord
+    def save_patches(self, wsi_fp, coord, patch_level, factor):
+        wsi = wsd.WholeSlideImage(wsi_fp, backend=self.backend)
+        with tqdm.tqdm(
+            coord,
+            desc=f"Saving patches for {wsi_fp.stem}",
+            unit=" region",
+            leave=False,
+        ) as t:
+            for x, y in t:
+                patch_spacing = wsi.spacings[patch_level]
+                width = self.region_size * factor
+                height = self.region_size * factor
+                patch = wsi.get_patch(x, y, width, height, spacing=patch_spacing, center=False)
+                pil_patch = Image.fromarray(patch).convert("RGB")
+                if factor != 1:
+                    assert width % self.region_size == 0, f"width ({width}) is not divisible by region_size ({self.region_size})"
+                    pil_patch = pil_patch.resize((self.region_size, self.region_size))
+                patch_fp = Path(f"/output/patches/{wsi_fp.stem}/{int(x)}_{int(y)}.jpg")
+                patch_fp.parent.mkdir(parents=True, exist_ok=True)
+                pil_patch.save(patch_fp)
+
+    def extract_slide_feature(self, wsi_fp, coord, patch_level, factor, nfeats_max: Optional[int] = None):
+        # dataset = PatchDataset(wsi_fp, coord, patch_level, factor, self.region_size, self.backend, nfeats_max=nfeats_max)
+        # dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=False, pin_memory=True)
+        wsi = wsd.WholeSlideImage(wsi_fp, backend=self.backend)
+        patch_spacing = wsi.spacings[patch_level]
+        width = self.region_size * factor
+        height = self.region_size * factor
+        dataloader = coord
         patch_features = []
         with torch.no_grad():
             with tqdm.tqdm(
@@ -90,15 +101,15 @@ class HierarchicalViT():
                 unit_scale=self.batch_size,
                 leave=False,
             ) as t:
-                # for x, y in t:
-                #     patch = wsi.get_patch(x, y, width, height, spacing=patch_spacing, center=False)
-                #     pil_patch = Image.fromarray(patch).convert("RGB")
-                #     if factor != 1:
-                #         assert width % self.region_size == 0, f"width ({width}) is not divisible by region_size ({self.region_size})"
-                #         pil_patch = pil_patch.resize((self.region_size, self.region_size))
-                #     imgs = transforms.functional.to_tensor(pil_patch)
-                #     imgs = imgs.unsqueeze(0)
-                for imgs in t:
+                for x, y in t:
+                    patch = wsi.get_patch(x, y, width, height, spacing=patch_spacing, center=False)
+                    pil_patch = Image.fromarray(patch).convert("RGB")
+                    if factor != 1:
+                        assert width % self.region_size == 0, f"width ({width}) is not divisible by region_size ({self.region_size})"
+                        pil_patch = pil_patch.resize((self.region_size, self.region_size))
+                    imgs = transforms.functional.to_tensor(pil_patch)
+                    imgs = imgs.unsqueeze(0)
+                # for imgs in t:
                     imgs = imgs.to(self.device, non_blocking=True)
                     batch_features = self.extract_patch_feature(imgs)
                     batch_features = batch_features.cpu()
@@ -151,7 +162,8 @@ class HierarchicalViT():
             for wsi_fp, mask_fp in t:
                 tqdm.tqdm.write(f"Processing {wsi_fp.stem}")
                 coord, level, factor = self.extract_coordinates(wsi_fp, mask_fp)
-                feature = self.extract_slide_feature(wsi_fp, coord, level, factor)
+                feature = self.extract_slide_feature(wsi_fp, coord, level, factor, nfeats_max=self.nfeats_max)
+                torch.save(feature, f"/output/{wsi_fp.stem}.pt")
                 feature = feature.to(self.device, non_blocking=True)
                 risk, vram = self.predict(feature)
                 overall_survival = self.postprocess(risk)
