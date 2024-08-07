@@ -2,12 +2,9 @@ import tqdm
 import torch
 import pandas as pd
 import torch.nn as nn
-import wholeslidedata as wsd
 
-from PIL import Image
 from pathlib import Path
 from typing import Optional
-from torchvision import transforms
 
 from source.utils import sort_coords, track_vram_usage
 from source.wsi import WholeSlideImage
@@ -21,6 +18,8 @@ class MIL():
         feature_aggregator: nn.Module,
         spacing: float,
         region_size: int,
+        features_dim: int,
+        patch_size: int = 256,
         batch_size: int = 1,
         num_workers: int = 1,
         backend: str = "openslide",
@@ -32,17 +31,18 @@ class MIL():
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.backend = backend
+        self.features_dim = features_dim
         self.nfeats_max = nfeats_max
+
+        self.npatch = int(region_size // patch_size) ** 2
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.feature_extractor = feature_extractor.to(self.device, non_blocking=True)
         self.feature_extractor.eval()
-        print("=+=" * 10)
 
         self.feature_aggregator = feature_aggregator.to(self.device, non_blocking=True)
         self.feature_aggregator.eval()
-        print("=+=" * 10)
 
     def load_inputs(self):
         """
@@ -63,36 +63,11 @@ class MIL():
         sorted_coordinates = sort_coords(coordinates)
         return sorted_coordinates, patch_level, resize_factor
 
-    def save_patches(self, wsi_fp, coord, patch_level, factor):
-        wsi = wsd.WholeSlideImage(wsi_fp, backend=self.backend)
-        with tqdm.tqdm(
-            coord,
-            desc=f"Saving patches for {wsi_fp.stem}",
-            unit=" region",
-            leave=False,
-        ) as t:
-            for x, y in t:
-                patch_spacing = wsi.spacings[patch_level]
-                width = self.region_size * factor
-                height = self.region_size * factor
-                patch = wsi.get_patch(x, y, width, height, spacing=patch_spacing, center=False)
-                pil_patch = Image.fromarray(patch).convert("RGB")
-                if factor != 1:
-                    assert width % self.region_size == 0, f"width ({width}) is not divisible by region_size ({self.region_size})"
-                    pil_patch = pil_patch.resize((self.region_size, self.region_size))
-                patch_fp = Path(f"/output/patches/{wsi_fp.stem}/{int(x)}_{int(y)}.jpg")
-                patch_fp.parent.mkdir(parents=True, exist_ok=True)
-                pil_patch.save(patch_fp)
-
     def extract_slide_feature(self, wsi_fp, coord, patch_level, factor, nfeats_max: Optional[int] = None):
-        # dataset = PatchDataset(wsi_fp, coord, patch_level, factor, self.region_size, self.backend, nfeats_max=nfeats_max)
-        # dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=False, pin_memory=True)
-        wsi = wsd.WholeSlideImage(wsi_fp, backend=self.backend)
-        patch_spacing = wsi.spacings[patch_level]
-        width = self.region_size * factor
-        height = self.region_size * factor
-        dataloader = coord
-        patch_features = []
+        dataset = PatchDataset(wsi_fp, coord, patch_level, factor, self.region_size, self.backend, nfeats_max=nfeats_max)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+        M = len(dataset)
+        slide_feature = torch.zeros(M, self.npatch, self.features_dim)
         with torch.no_grad():
             with tqdm.tqdm(
                 dataloader,
@@ -101,27 +76,19 @@ class MIL():
                 unit_scale=self.batch_size,
                 leave=False,
             ) as t:
-                for x, y in t:
-                    patch = wsi.get_patch(x, y, width, height, spacing=patch_spacing, center=False)
-                    pil_patch = Image.fromarray(patch).convert("RGB")
-                    if factor != 1:
-                        assert width % self.region_size == 0, f"width ({width}) is not divisible by region_size ({self.region_size})"
-                        pil_patch = pil_patch.resize((self.region_size, self.region_size))
-                    imgs = transforms.functional.to_tensor(pil_patch)
-                    imgs = imgs.unsqueeze(0)
-                # for imgs in t:
-                    imgs = imgs.to(self.device, non_blocking=True)
-                    batch_features = self.extract_patch_feature(imgs)
-                    batch_features = batch_features.cpu()
-                    patch_features.append(batch_features)
+                for batch in t:
+                    idx, img = batch
+                    img = img.to(self.device, non_blocking=True)
+                    features = self.extract_patch_feature(img)
+                    features = features.cpu()
+                    for i, j in enumerate(idx):
+                        slide_feature[j] = features[i]
                     torch.cuda.empty_cache()
-        slide_feature = torch.cat(patch_features, dim=0)
         return slide_feature
 
     def extract_patch_feature(self, patch):
         with torch.no_grad():
             feature = self.feature_extractor(patch)
-            feature = feature.unsqueeze(0)
         return feature
 
     def write_outputs(self, case_list, predictions, vram_consumption):

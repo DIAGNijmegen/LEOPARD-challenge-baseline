@@ -46,6 +46,7 @@ def run(args):
     # instantiate feature extractor
     feature_extractor_weights = Path(RESOURCE_PATH, f"feature_extractor.pt")
     feature_extractor = UNI(feature_extractor_weights)
+    print("=+=" * 10)
 
     # instantiate feature aggregator
     feature_aggregator_weights = Path(RESOURCE_PATH, f"feature_aggregator_{args.region_size}_{args.fold}.pt")
@@ -55,6 +56,7 @@ def run(args):
         region_size=args.region_size,
         input_embed_dim=args.features_dim,
     )
+    print("=+=" * 10)
 
     # instantiate the algorithm
     algorithm = MIL(
@@ -62,6 +64,7 @@ def run(args):
         feature_aggregator,
         spacing=0.5,
         region_size=args.region_size,
+        features_dim=args.features_dim,
         backend="asap",
         batch_size=1,
         num_workers=1,

@@ -59,15 +59,17 @@ class CustomViT(nn.Module):
             mask_mini_patch = torch.cat(
                 (cls_token, mask_mini_patch), dim=1
             )  # [num_patches, num_mini_patches+1]
-        # x = [1, 3, region_size, region_size]
+        # x = [B, 3, region_size, region_size]
+        num_patches = (x.shape[2] // self.ps) ** 2
         x = x.unfold(2, self.ps, self.ps).unfold(
             3, self.ps, self.ps
-        )  # [1, 3, npatch, region_size, ps] -> [1, 3, npatch, npatch, ps, ps]
-        x = rearrange(x, "b c p1 p2 w h -> (b p1 p2) c w h")  # [num_patches, 3, ps, ps]
+        )  # [B, 3, npatch, region_size, ps] -> [B, 3, npatch, npatch, ps, ps]
+        x = rearrange(x, "b c p1 p2 w h -> (b p1 p2) c w h")  # [B*num_patches, 3, ps, ps]
 
         patch_feature = (
             self.vit(x, mask=mask_mini_patch).detach()
-        )  # [num_patches, 384]
+        )  # [B*num_patches, 384]
+        patch_feature = patch_feature.reshape(-1, num_patches, patch_feature.shape[-1])
         return patch_feature
 
 
@@ -88,7 +90,7 @@ class UNI(nn.Module):
 
         if Path(pretrained_weights).is_file():
             if verbose:
-                print("Loading pretrained weights")
+                print("Loading pretrained weights for UNI")
             state_dict = torch.load(pretrained_weights, map_location="cpu")
             state_dict, msg = update_state_dict(self.vit.state_dict(), state_dict)
             self.vit.load_state_dict(state_dict, strict=True)
@@ -104,20 +106,21 @@ class UNI(nn.Module):
         for param in self.vit.parameters():
             param.requires_grad = False
 
-    def forward(self, x, pct: Optional[torch.Tensor] = None, pct_thresh: float = 0.0):
-        # x = [1, 3, region_size, region_size]
+    def forward(self, x):
+        # x = [B, 3, region_size, region_size]
+        num_patches = (x.shape[2] // self.ps) ** 2
         x = x.unfold(2, self.ps, self.ps).unfold(
             3, self.ps, self.ps
-        )  # [1, 3, npatch, region_size, ps] -> [1, 3, npatch, npatch, ps, ps]
-        x = rearrange(x, "b c p1 p2 w h -> (b p1 p2) c w h")  # [num_patches, 3, ps, ps]
+        )  # [B, 3, npatch, region_size, ps] -> [B, 3, npatch, npatch, ps, ps]
+        x = rearrange(x, "b c p1 p2 w h -> (b p1 p2) c w h")  # [B*num_patches, 3, ps, ps]
 
         # apply center crop to fit expected input size
-        cropped_x = torch.stack([self.center_crop(patch) for patch in x])
+        cropped_x = torch.stack([self.center_crop(patch) for patch in x])   # [B*num_patches, 3, 224, 224]
 
         patch_feature = (
             self.vit(cropped_x).detach().cpu()
-        )  # [num_patches, 1024]
-
+        )  # [B*num_patches, 1024]
+        patch_feature = patch_feature.reshape(-1, num_patches, patch_feature.shape[-1])
         return patch_feature
 
 
