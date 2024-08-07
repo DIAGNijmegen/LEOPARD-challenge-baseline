@@ -8,7 +8,7 @@ from typing import Optional
 
 from source.utils import sort_coords, track_vram_usage
 from source.wsi import WholeSlideImage
-from source.dataset import PatchDataset
+from source.dataset import PatchDataset, PatchDatasetCucim
 
 
 class MIL():
@@ -65,6 +65,7 @@ class MIL():
 
     def extract_slide_feature(self, wsi_fp, coord, patch_level, factor, nfeats_max: Optional[int] = None):
         dataset = PatchDataset(wsi_fp, coord, patch_level, factor, self.region_size, self.backend, nfeats_max=nfeats_max)
+        # dataset = PatchDatasetCucim(wsi_fp, coord, patch_level, factor, self.region_size, nfeats_max=nfeats_max)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers)
         M = len(dataset)
         slide_feature = torch.zeros(M, self.npatch, self.features_dim)
@@ -79,6 +80,9 @@ class MIL():
                 for batch in t:
                     idx, img = batch
                     img = img.to(self.device, non_blocking=True)
+                    if dataset.factor != 1:
+                        assert dataset.width % dataset.region_size == 0, f"width ({dataset.width}) is not divisible by region_size ({dataset.region_size})"
+                        img = torch.nn.functional.interpolate(img, size=(dataset.region_size, dataset.region_size), mode='bilinear', align_corners=False)
                     features = self.extract_patch_feature(img)
                     features = features.cpu()
                     for i, j in enumerate(idx):
