@@ -6,7 +6,7 @@ import torch.nn as nn
 from pathlib import Path
 from typing import Optional
 
-from source.utils import sort_coords, track_vram_usage
+from source.utils import sort_coords
 from source.wsi import WholeSlideImage
 from source.dataset import PatchDataset
 
@@ -48,14 +48,9 @@ class MIL():
         """
         Read from /input/
         """
-        case_list = sorted([fp for fp in Path("/input/wsi").glob("*.tif")])
-        mask_list = sorted([fp for fp in Path("/input/mask").glob("*.tif")])
-        case_dict = {fp.stem: fp for fp in case_list}
-        mask_dict = {fp.stem.replace("_tissue", ""): fp for fp in mask_list}
-        common_keys = case_dict.keys() & mask_dict.keys()
-        sorted_case_list = [case_dict[key] for key in sorted(common_keys)]
-        sorted_mask_list = [mask_dict[key] for key in sorted(common_keys)]
-        return sorted_case_list, sorted_mask_list
+        case_list = sorted([fp for fp in Path("/input/images/prostatectomy-wsi").glob("*.tif")])
+        mask_list = sorted([fp for fp in Path("/input/images/prostatectomy-tissue-mask").glob("*.tif")])
+        return case_list, mask_list
 
     def extract_coordinates(self, wsi_fp, mask_fp):
         wsi = WholeSlideImage(wsi_fp, mask_fp)
@@ -91,7 +86,7 @@ class MIL():
             feature = self.feature_extractor(patch)
         return feature
 
-    def write_outputs(self, case_list, predictions, vram_consumption):
+    def write_outputs(self, case_list, predictions):
         """
         Write to /output/
         Check https://grand-challenge.org/algorithms/interfaces/
@@ -99,25 +94,23 @@ class MIL():
         df = pd.DataFrame({
             "slide_id": [fp.stem for fp in case_list],
             "overall_survival_years": predictions,
-            "vram": vram_consumption,
         })
         df.to_csv("/output/predictions.csv", index=False)
         return df
 
     def predict(self, feature):
         with torch.no_grad():
-            logit, vram = track_vram_usage(self.feature_aggregator, feature)
+            logit = self.feature_aggregator(feature)
             hazard = torch.sigmoid(logit)
             surv = torch.cumprod(1 - hazard, dim=1)
             risk = -torch.sum(surv, dim=1).detach().item()
-        return risk, vram
+        return risk
 
     def process(self):
         """
         Read inputs from /input, process with your algorithm and write to /output
         """
         case_list, mask_list = self.load_inputs()
-        vram_consumption = []
         predictions = []
         with tqdm.tqdm(
             zip(case_list, mask_list),
@@ -130,14 +123,11 @@ class MIL():
                 tqdm.tqdm.write(f"Processing {wsi_fp.stem}")
                 coord, level, factor = self.extract_coordinates(wsi_fp, mask_fp)
                 feature = self.extract_slide_feature(wsi_fp, coord, level, factor, nfeats_max=self.nfeats_max)
-                torch.save(feature, f"/output/{wsi_fp.stem}.pt")
                 feature = feature.to(self.device, non_blocking=True)
-                risk, vram = self.predict(feature)
+                risk = self.predict(feature)
                 overall_survival = self.postprocess(risk)
                 predictions.append(overall_survival)
-                vram_consumption.append(vram)
-        prediction_df = self.write_outputs(case_list, predictions, vram_consumption)
-        return prediction_df
+        return predictions
 
     def postprocess(self, risk):
         overall_survival_years = risk
