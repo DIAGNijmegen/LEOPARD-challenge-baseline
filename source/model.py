@@ -127,6 +127,7 @@ class MIL():
                 risk = self.predict(feature)
                 overall_survival = self.postprocess(risk)
                 predictions.append(overall_survival)
+        self.write_outputs(case_list, predictions)
         return predictions
 
     def postprocess(self, risk):
