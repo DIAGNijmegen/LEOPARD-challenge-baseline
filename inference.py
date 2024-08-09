@@ -51,7 +51,8 @@ def run():
         features_dim=features_dim,
         backend="asap",
         batch_size=1,
-        num_workers=1,
+        num_workers_data_loading=1,
+        num_workers_preprocessing=4,
         nfeats_max=nfeats_max,
     )
 

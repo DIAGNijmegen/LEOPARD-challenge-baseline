@@ -15,6 +15,9 @@ from source.wsi import WholeSlideImage
 from source.dataset import PatchDatasetFromDisk
 
 
+# set the start method to 'spawn'
+mp.set_start_method('spawn', force=True)
+
 class MIL():
     def __init__(
         self,
@@ -69,15 +72,17 @@ class MIL():
         sorted_coordinates = sort_coords(coordinates)
         return sorted_coordinates, patch_level, resize_factor
 
-    def save_patch(self, coord, wsi, wsi_name, spacing, patch_size, resize_factor):
+    def save_patch(self, coord, wsi_fp, spacing, patch_size, resize_factor):
         x, y = coord
+        wsi = wsd.WholeSlideImage(wsi_fp, backend=self.backend)
         patch = wsi.get_patch(x, y, patch_size, patch_size, spacing=spacing, center=False)
         pil_patch = Image.fromarray(patch).convert("RGB")
         if resize_factor != 1:
             assert patch_size % self.region_size == 0, f"width ({patch_size}) is not divisible by region_size ({self.region_size})"
             pil_patch = pil_patch.resize((self.region_size, self.region_size))
-        patch_fp = Path(f"/output/patches/{wsi_name}/{int(x)}_{int(y)}.jpg")
+        patch_fp = Path(f"/output/patches/{wsi_fp.stem}/{int(x)}_{int(y)}.jpg")
         pil_patch.save(patch_fp)
+        return patch_fp
 
     def save_patches(self, wsi_fp, coord, patch_level, factor):
         wsi_name = wsi_fp.stem
@@ -92,13 +97,18 @@ class MIL():
                 num_workers = min(
                     num_workers, int(os.environ["SLURM_JOB_CPUS_PER_NODE"])
                 )
-            pool = mp.Pool(num_workers)
             iterable = [
-                (c, wsi, wsi_name, patch_spacing, patch_size, factor)
+                (c, wsi_fp, patch_spacing, patch_size, factor)
                 for c in coord
             ]
-            pool.starmap(self.save_patch, iterable)
-            pool.close()
+            with mp.Pool(num_workers) as pool:
+                for _ in tqdm.tqdm(
+                    pool.imap_unordered(self.save_patch, iterable),
+                    desc="Patch saving",
+                    unit=" patch",
+                    total=len(iterable),
+                ):
+                    pass
         else:
             with tqdm.tqdm(
                 coord,
