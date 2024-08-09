@@ -50,7 +50,12 @@ class MIL():
         """
         case_list = sorted([fp for fp in Path("/input/images/prostatectomy-wsi").glob("*.tif")])
         mask_list = sorted([fp for fp in Path("/input/images/prostatectomy-tissue-mask").glob("*.tif")])
-        return case_list, mask_list
+        case_dict = {fp.stem: fp for fp in case_list}
+        mask_dict = {fp.stem.replace("_tissue", ""): fp for fp in mask_list}
+        common_keys = case_dict.keys() & mask_dict.keys()
+        sorted_case_list = [case_dict[key] for key in sorted(common_keys)]
+        sorted_mask_list = [mask_dict[key] for key in sorted(common_keys)]
+        return sorted_case_list, sorted_mask_list
 
     def extract_coordinates(self, wsi_fp, mask_fp):
         wsi = WholeSlideImage(wsi_fp, mask_fp)
