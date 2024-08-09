@@ -4,6 +4,7 @@ import wholeslidedata as wsd
 from PIL import Image
 from torchvision import transforms
 from typing import Optional
+from pathlib import Path
 
 
 class PatchDataset(torch.utils.data.Dataset):
@@ -34,3 +35,22 @@ class PatchDataset(torch.utils.data.Dataset):
             pil_patch = pil_patch.resize((self.region_size, self.region_size))
         img = transforms.functional.to_tensor(pil_patch)
         return idx, img
+
+
+class PatchDatasetFromDisk(torch.utils.data.Dataset):
+    def __init__(self, wsi_fp, nfeats_max: Optional[int] = None):
+        self.seed = 0
+        self.name = wsi_fp.stem
+        self.patches = sorted([x for x in Path(f"/output/patches/{self.name}").glob("*.jpg")])
+        if nfeats_max and len(self.patches) > nfeats_max:
+            torch.manual_seed(self.seed)
+            sampled_indices = torch.randperm(len(self.patches))[:nfeats_max].sort().values
+            self.patches = self.patches[sampled_indices]
+
+    def __len__(self):
+        return len(self.patches)
+
+    def __getitem__(self, idx):
+        patch = Image.open(self.patches[idx])
+        img = transforms.functional.to_tensor(patch)
+        return img

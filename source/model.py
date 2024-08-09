@@ -1,14 +1,18 @@
+import os
 import tqdm
 import torch
 import pandas as pd
 import torch.nn as nn
+import wholeslidedata as wsd
+import multiprocessing as mp
 
+from PIL import Image
 from pathlib import Path
 from typing import Optional
 
 from source.utils import sort_coords
 from source.wsi import WholeSlideImage
-from source.dataset import PatchDataset
+from source.dataset import PatchDatasetFromDisk
 
 
 class MIL():
@@ -21,7 +25,8 @@ class MIL():
         features_dim: int,
         patch_size: int = 256,
         batch_size: int = 1,
-        num_workers: int = 1,
+        num_workers_data_loading: int = 1,
+        num_workers_preprocessing: int = 4,
         backend: str = "openslide",
         nfeats_max: Optional[int] = None,
     ):
@@ -29,7 +34,8 @@ class MIL():
         self.spacing = spacing
         self.region_size = region_size
         self.batch_size = batch_size
-        self.num_workers = num_workers
+        self.num_workers_data_loading = num_workers_data_loading
+        self.num_workers_preprocessing = num_workers_preprocessing
         self.backend = backend
         self.features_dim = features_dim
         self.nfeats_max = nfeats_max
@@ -59,13 +65,53 @@ class MIL():
 
     def extract_coordinates(self, wsi_fp, mask_fp):
         wsi = WholeSlideImage(wsi_fp, mask_fp)
-        coordinates, patch_level, resize_factor = wsi.get_patch_coordinates(self.spacing, self.region_size)
+        coordinates, patch_level, resize_factor = wsi.get_patch_coordinates(self.spacing, self.region_size, num_workers=self.num_workers_preprocessing)
         sorted_coordinates = sort_coords(coordinates)
         return sorted_coordinates, patch_level, resize_factor
 
-    def extract_slide_feature(self, wsi_fp, coord, patch_level, factor, nfeats_max: Optional[int] = None):
-        dataset = PatchDataset(wsi_fp, coord, patch_level, factor, self.region_size, self.backend, nfeats_max=nfeats_max)
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+    def save_patch(self, coord, wsi, wsi_name, spacing, patch_size, resize_factor):
+        x, y = coord
+        patch = wsi.get_patch(x, y, patch_size, patch_size, spacing=spacing, center=False)
+        pil_patch = Image.fromarray(patch).convert("RGB")
+        if resize_factor != 1:
+            assert patch_size % self.region_size == 0, f"width ({patch_size}) is not divisible by region_size ({self.region_size})"
+            pil_patch = pil_patch.resize((self.region_size, self.region_size))
+        patch_fp = Path(f"/output/patches/{wsi_name}/{int(x)}_{int(y)}.jpg")
+        pil_patch.save(patch_fp)
+
+    def save_patches(self, wsi_fp, coord, patch_level, factor):
+        wsi_name = wsi_fp.stem
+        wsi = wsd.WholeSlideImage(wsi_fp, backend=self.backend)
+        patch_spacing = wsi.spacings[patch_level]
+        patch_size = self.region_size * factor
+        patch_dir = Path(f"/output/patches/{wsi_name}/")
+        patch_dir.mkdir(parents=True, exist_ok=True)
+        if self.num_workers_preprocessing > 1:
+            num_workers = min(mp.cpu_count(), self.num_workers_preprocessing)
+            if "SLURM_JOB_CPUS_PER_NODE" in os.environ:
+                num_workers = min(
+                    num_workers, int(os.environ["SLURM_JOB_CPUS_PER_NODE"])
+                )
+            pool = mp.Pool(num_workers)
+            iterable = [
+                (c, wsi, wsi_name, patch_spacing, patch_size, factor)
+                for c in coord
+            ]
+            pool.starmap(self.save_patch, iterable)
+            pool.close()
+        else:
+            with tqdm.tqdm(
+                coord,
+                desc=f"Saving patches for {wsi_fp.stem}",
+                unit=" region",
+                leave=False,
+            ) as t:
+                for c in t:
+                    self.save_patch(c, wsi, wsi_name, patch_spacing, patch_size, factor)
+
+    def extract_slide_feature(self, wsi_fp, nfeats_max: Optional[int] = None):
+        dataset = PatchDatasetFromDisk(wsi_fp, nfeats_max=nfeats_max)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers_data_loading)
         M = len(dataset)
         slide_feature = torch.zeros(M, self.npatch, self.features_dim)
         with torch.no_grad():
@@ -127,7 +173,8 @@ class MIL():
             for wsi_fp, mask_fp in t:
                 tqdm.tqdm.write(f"Processing {wsi_fp.stem}")
                 coord, level, factor = self.extract_coordinates(wsi_fp, mask_fp)
-                feature = self.extract_slide_feature(wsi_fp, coord, level, factor, nfeats_max=self.nfeats_max)
+                self.save_patches(wsi_fp, coord, level, factor)
+                feature = self.extract_slide_feature(wsi_fp, nfeats_max=self.nfeats_max)
                 feature = feature.to(self.device, non_blocking=True)
                 risk = self.predict(feature)
                 overall_survival = self.postprocess(risk)
