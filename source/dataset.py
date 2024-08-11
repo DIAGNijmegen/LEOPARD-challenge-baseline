@@ -53,4 +53,4 @@ class PatchDatasetFromDisk(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         patch = Image.open(self.patches[idx])
         img = transforms.functional.to_tensor(patch)
-        return img
+        return idx, img

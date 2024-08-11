@@ -1,9 +1,11 @@
 import os
 import json
+import tqdm
 import torch
 
 from pathlib import Path
 
+from source.utils import load_inputs, extract_coordinates, save_patches
 from source.model import MIL
 from source.components import UNI, HierarchicalViT
 
@@ -22,10 +24,29 @@ def run():
     print("=+=" * 10)
 
     # set baseline parameters
+    spacing = 0.5
     region_size = 2048
     features_dim = 1024
     nbins = 4
     nfeats_max = None
+    num_workers_data_loading = 4
+    num_workers_preprocessing = 4
+    batch_size = 4
+
+    # preprocess input
+    case_list, mask_list = load_inputs()
+    with tqdm.tqdm(
+        zip(case_list, mask_list),
+        desc="Extracting patch coordinates",
+        unit=" case",
+        total=len(case_list),
+        leave=True,
+    ) as t:
+        for wsi_fp, mask_fp in t:
+            tqdm.tqdm.write(f"Preprocessing {wsi_fp.stem}")
+            coord, level, factor = extract_coordinates(wsi_fp, mask_fp, spacing, region_size, num_workers=num_workers_preprocessing)
+            save_patches(wsi_fp, coord, level, region_size, factor, backend="asap", num_workers=num_workers_preprocessing)
+    print("=+=" * 10)
 
     # instantiate feature extractor
     feature_extractor_weights = Path(RESOURCE_PATH, f"feature_extractor.pt")
@@ -46,13 +67,12 @@ def run():
     algorithm = MIL(
         feature_extractor,
         feature_aggregator,
-        spacing=0.5,
+        spacing=spacing,
         region_size=region_size,
         features_dim=features_dim,
         backend="asap",
-        batch_size=1,
-        num_workers_data_loading=1,
-        num_workers_preprocessing=4,
+        batch_size=batch_size,
+        num_workers_data_loading=num_workers_data_loading,
         nfeats_max=nfeats_max,
     )
 
