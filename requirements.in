@@ -1,0 +1,16 @@
+h5py
+timm
+wandb
+numpy==%NUMPY_VERSION%
+pandas
+pillow
+gdown
+plotly
+einops
+matplotlib
+scikit-learn
+scikit-survival
+tqdm
+wholeslidedata
+torch==%PYTORCH_VERSION%
+torchvision==%TORCHVISION_VERSION%
