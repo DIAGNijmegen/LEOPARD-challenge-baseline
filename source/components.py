@@ -117,9 +117,7 @@ class UNI(nn.Module):
         # apply center crop to fit expected input size
         cropped_x = torch.stack([self.center_crop(patch) for patch in x])   # [B*num_patches, 3, 224, 224]
 
-        patch_feature = (
-            self.vit(cropped_x).detach().cpu()
-        )  # [B*num_patches, 1024]
+        patch_feature = self.vit(cropped_x).detach().cpu()  # [B*num_patches, 1024]
         patch_feature = patch_feature.reshape(-1, num_patches, patch_feature.shape[-1])
         return patch_feature
 

@@ -189,7 +189,7 @@ class WholeSlideImage(object):
         num_workers: int = 1,
     ):
         contours, holes = self.detect_contours(target_spacing, filter_params)
-        running_x_coords, running_y_coords, patch_level, resize_factor = self.process_contours(
+        running_x_coords, running_y_coords, tissue_percentages, patch_level, resize_factor = self.process_contours(
             contours,
             holes,
             spacing=target_spacing,
@@ -201,7 +201,7 @@ class WholeSlideImage(object):
             num_workers=num_workers,
         )
         patch_coordinates = list(zip(running_x_coords, running_y_coords))
-        return patch_coordinates, patch_level, resize_factor
+        return patch_coordinates, tissue_percentages, patch_level, resize_factor
 
     def detect_contours(
         self, target_spacing: float, filter_params: Dict[str, int],
@@ -331,6 +331,7 @@ class WholeSlideImage(object):
         num_workers: int = 1,
     ):
         running_x_coords, running_y_coords = [], []
+        running_tissue_pct = []
         patch_level = None
         resize_factor = None
 
@@ -343,7 +344,7 @@ class WholeSlideImage(object):
         ) as t:
             for i, cont in enumerate(t):
 
-                x_coords, y_coords, patch_level, resize_factor = self.process_contour(
+                x_coords, y_coords, tissue_pct, patch_level, resize_factor = self.process_contour(
                     cont,
                     holes[i],
                     spacing,
@@ -357,8 +358,9 @@ class WholeSlideImage(object):
                 if len(x_coords) > 0:
                     running_x_coords.extend(x_coords)
                     running_y_coords.extend(y_coords)
+                    running_tissue_pct.extend(tissue_pct)
 
-        return running_x_coords, running_y_coords, patch_level, resize_factor
+        return running_x_coords, running_y_coords, running_tissue_pct, patch_level, resize_factor
 
     def process_contour(
         self,
@@ -451,29 +453,33 @@ class WholeSlideImage(object):
             ]
             results = pool.starmap(WholeSlideImage.process_coord_candidate, iterable)
             pool.close()
-            filtered_results = np.array(
+            filtered_coordinates = np.array(
                 [result[0] for result in results if result[0] is not None]
             )
+            filtered_tissue_percentages = [result[1] for result in results if result[0] is not None]
         else:
-            results = []
+            coordinates = []
+            tissue_percentages = []
             for coord in coord_candidates:
                 c, pct = self.process_coord_candidate(
                     coord, contour_holes, ref_patch_size[0], cont_check_fn, drop_holes
                 )
-                results.append(c)
-            filtered_results = np.array(
-                [result for result in results if result is not None]
+                coordinates.append(c)
+                tissue_percentages.append(pct)
+            filtered_coordinates = np.array(
+                [coordinate for coordinate in coordinates if coordinate is not None]
             )
+            filtered_tissue_percentages = [tissue_percentages[i] for i, coordinate in enumerate(coordinates) if coordinate is not None]
 
-        npatch = len(filtered_results)
+        npatch = len(filtered_coordinates)
 
         if npatch > 0:
-            x_coords = list(filtered_results[:, 0])
-            y_coords = list(filtered_results[:, 1])
-            return x_coords, y_coords, patch_level, resize_factor
+            x_coords = list(filtered_coordinates[:, 0])
+            y_coords = list(filtered_coordinates[:, 1])
+            return x_coords, y_coords, filtered_tissue_percentages, patch_level, resize_factor
 
         else:
-            return [], [], None, None
+            return [], [], [], None, None
 
     @staticmethod
     def process_coord_candidate(

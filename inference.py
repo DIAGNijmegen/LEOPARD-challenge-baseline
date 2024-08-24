@@ -28,7 +28,7 @@ def run():
     region_size = 2048
     features_dim = 1024
     nbins = 4
-    nfeats_max = None
+    nregion_max = 1400
     num_workers_data_loading = 4
     num_workers_preprocessing = 4
     batch_size = 4
@@ -44,8 +44,8 @@ def run():
     ) as t:
         for wsi_fp, mask_fp in t:
             tqdm.tqdm.write(f"Preprocessing {wsi_fp.stem}")
-            coord, level, factor = extract_coordinates(wsi_fp, mask_fp, spacing, region_size, num_workers=num_workers_preprocessing)
-            save_patches(wsi_fp, coord, level, region_size, factor, backend="asap", num_workers=num_workers_preprocessing)
+            coord, tissue_pct, level, factor = extract_coordinates(wsi_fp, mask_fp, spacing, region_size, num_workers=num_workers_preprocessing)
+            save_patches(wsi_fp, coord, tissue_pct, level, region_size, factor, backend="asap", nregion_max=nregion_max, num_workers=num_workers_preprocessing)
     print("=+=" * 10)
 
     # instantiate feature extractor
@@ -73,7 +73,6 @@ def run():
         backend="asap",
         batch_size=batch_size,
         num_workers_data_loading=num_workers_data_loading,
-        nfeats_max=nfeats_max,
     )
 
     # forward pass

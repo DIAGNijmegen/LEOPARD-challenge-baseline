@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 class PatchDataset(torch.utils.data.Dataset):
-    def __init__(self, wsi_fp, coord, patch_level, factor, region_size, backend, nfeats_max: Optional[int] = None):
+    def __init__(self, wsi_fp, coord, patch_level, factor, region_size, backend):
         self.seed = 0
         self.coord = coord
         self.factor = factor
@@ -17,11 +17,6 @@ class PatchDataset(torch.utils.data.Dataset):
         self.patch_spacing = self.wsi.spacings[patch_level]
         self.width = self.region_size * factor
         self.height = self.region_size * factor
-
-        if nfeats_max and len(self.coord) > nfeats_max:
-            torch.manual_seed(self.seed)
-            sampled_indices = torch.randperm(len(self.coord))[:nfeats_max].sort().values
-            self.coord = self.coord[sampled_indices]
 
     def __len__(self):
         return len(self.coord)
@@ -38,14 +33,10 @@ class PatchDataset(torch.utils.data.Dataset):
 
 
 class PatchDatasetFromDisk(torch.utils.data.Dataset):
-    def __init__(self, wsi_fp, nfeats_max: Optional[int] = None):
+    def __init__(self, wsi_fp):
         self.seed = 0
         self.name = wsi_fp.stem
-        self.patches = sorted([x for x in Path(f"/output/patches/{self.name}").glob("*.jpg")])
-        if nfeats_max and len(self.patches) > nfeats_max:
-            torch.manual_seed(self.seed)
-            sampled_indices = torch.randperm(len(self.patches))[:nfeats_max].sort().values
-            self.patches = self.patches[sampled_indices]
+        self.patches = sorted([x for x in Path(f"/tmp/patches/{self.name}").glob("*.jpg")])
 
     def __len__(self):
         return len(self.patches)
