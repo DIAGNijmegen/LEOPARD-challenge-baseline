@@ -380,7 +380,7 @@ class WholeSlideImage(object):
         )
 
         patch_spacing = self.get_level_spacing(patch_level)
-        resize_factor = int(spacing / patch_spacing)
+        resize_factor = int(round(spacing / patch_spacing, 0))
         patch_size_resized = patch_size * resize_factor
         step_size = int(patch_size_resized * (1.0 - overlap))
 

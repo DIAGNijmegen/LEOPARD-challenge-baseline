@@ -28,7 +28,7 @@ def run():
     region_size = 2048
     features_dim = 1024
     nbins = 4
-    nregion_max = 1400
+    nregion_max = None
     num_workers_data_loading = 4
     num_workers_preprocessing = 4
     batch_size = 4

@@ -3,7 +3,6 @@ import wholeslidedata as wsd
 
 from PIL import Image
 from torchvision import transforms
-from typing import Optional
 from pathlib import Path
 
 
