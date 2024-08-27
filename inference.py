@@ -2,6 +2,7 @@ import os
 import json
 import tqdm
 import torch
+import argparse
 import torch.distributed as dist
 
 from pathlib import Path
@@ -16,7 +17,16 @@ OUTPUT_PATH = Path("/output")
 RESOURCE_PATH = Path("/opt/app/resources")
 
 
-def run():
+def get_args_parser(add_help: bool = True):
+    parser = argparse.ArgumentParser("Local HViT", add_help=add_help)
+    parser.add_argument("--spacing", default=0.5, type=float, help="pixel spacing in mpp")
+    parser.add_argument("--region_size", default=2048, type=int, help="context size")
+    parser.add_argument("--features_dim", default=1024, type=int, help="tile-level features dimension")
+    parser.add_argument("--nregion_max", default=None, type=int, help="maximum number of regions to keep")
+    return parser
+
+
+def run(args):
 
     distributed = torch.cuda.device_count() > 1
     if distributed:
@@ -31,11 +41,11 @@ def run():
         print("=+=" * 10)
 
     # set baseline parameters
-    spacing = 0.5
-    region_size = 2048
-    features_dim = 1024
+    spacing = args.spacing
+    region_size = args.region_size
+    features_dim = args.features_dim
     nbins = 4
-    nregion_max = None
+    nregion_max = args.nregion_max
     num_workers_data_loading = 4
     num_workers_preprocessing = 4
     batch_size = 4
@@ -136,4 +146,5 @@ def _show_torch_cuda_info():
 
 if __name__ == "__main__":
 
-    raise SystemExit(run())
+    args = get_args_parser(add_help=True).parse_args()
+    raise SystemExit(run(args))

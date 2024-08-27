@@ -60,10 +60,8 @@ class MIL():
         else:
             sampler = None
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, sampler=sampler, num_workers=self.num_workers_data_loading, pin_memory=True)
-        M = len(dataset)
-        # slide_feature = torch.zeros(M, self.npatch, self.features_dim, device=self.device)
-        # patch_indices = torch.zeros(M, dtype=torch.long, device=self.device)  # track indices
-        patch_features, patch_indices = [], []
+        patch_feature = torch.empty((0, self.npatch, self.features_dim), device=self.device)
+        patch_indices = torch.empty((0,), dtype=torch.long, device=self.device)
         with torch.no_grad():
             with tqdm.tqdm(
                 dataloader,
@@ -77,29 +75,23 @@ class MIL():
                     idx, img = batch
                     img = img.to(self.device, non_blocking=True)
                     features = self.extract_patch_feature(img)
-                    # for i, j in enumerate(idx):
-                    #     slide_feature[j] = features[i]
-                    #     patch_indices[j] = j
-                    patch_features.append(features)
-                    patch_indices.append(idx)
+                    patch_feature = torch.cat((patch_feature, features), dim=0)
+                    patch_indices = torch.cat((patch_indices, idx.to(self.device, non_blocking=True)), dim=0)
                     torch.cuda.empty_cache()
 
-        # concatenate features and indices across batches
-        slide_feature = torch.cat(patch_features, dim=0)
-        patch_indices = torch.cat(patch_indices, dim=0)
-        # ensure slide_feature and patch_indices are contiguous and on the correct device
-        slide_feature = slide_feature.contiguous().to(self.device)
-        patch_indices = patch_indices.contiguous().to(self.device)
+        if self.distributed:
+            dist.barrier()
+
         if self.distributed:
             # gather features and indices from all GPUs
-            gathered_slide_feature = [torch.zeros_like(slide_feature, device=self.device) for _ in range(dist.get_world_size())]
-            gathered_patch_indices = [torch.zeros_like(patch_indices, device=self.device) for _ in range(dist.get_world_size())]
-            dist.all_gather(gathered_slide_feature, slide_feature)
-            dist.all_gather(gathered_patch_indices, patch_indices)
+            gathered_feature = [torch.zeros_like(patch_feature, device=self.device) for _ in range(dist.get_world_size())]
+            gathered_indices = [torch.zeros_like(patch_indices, device=self.device) for _ in range(dist.get_world_size())]
+            dist.all_gather(gathered_feature, patch_feature)
+            dist.all_gather(gathered_indices, patch_indices)
             if is_main_process():
                 # concatenate the gathered features and indices
-                slide_feature = torch.cat(gathered_slide_feature, dim=0)
-                patch_indices = torch.cat(gathered_patch_indices, dim=0)
+                slide_feature = torch.cat(gathered_feature, dim=0)
+                patch_indices = torch.cat(gathered_indices, dim=0)
                 # create a final tensor to store the features in the correct order
                 slide_feature_ordered = torch.zeros_like(slide_feature, device=self.device)
                 # insert each feature into its correct position based on patch_indices
@@ -107,10 +99,9 @@ class MIL():
             else:
                 slide_feature_ordered = None
         else:
-            # create a final tensor to store the features in the correct order
-            slide_feature_ordered = torch.zeros_like(slide_feature, device=self.device)
-            # insert each feature into its correct position based on patch_indices
-            slide_feature_ordered[patch_indices] = slide_feature
+            slide_feature_ordered = torch.zeros_like(patch_feature, device=self.device)
+            slide_feature_ordered[patch_indices] = patch_feature
+
         return slide_feature_ordered
 
     def extract_patch_feature(self, patch):
@@ -162,7 +153,6 @@ class MIL():
                 feature = self.extract_slide_feature(wsi_fp)
                 if self.distributed and feature is None:
                     continue  # skip further processing if this is not the main process
-                feature = feature.to(self.device, non_blocking=True)
                 nregion = len(feature)
                 risk = self.predict(feature)
                 overall_survival = self.postprocess(risk)
