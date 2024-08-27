@@ -344,7 +344,7 @@ class WholeSlideImage(object):
         ) as t:
             for i, cont in enumerate(t):
 
-                x_coords, y_coords, tissue_pct, patch_level, resize_factor = self.process_contour(
+                x_coords, y_coords, tissue_pct, cont_patch_level, cont_resize_factor = self.process_contour(
                     cont,
                     holes[i],
                     spacing,
@@ -356,6 +356,10 @@ class WholeSlideImage(object):
                     num_workers=num_workers,
                 )
                 if len(x_coords) > 0:
+                    if patch_level is not None:
+                        assert patch_level == cont_patch_level, "Patch level should be the same for all contours"
+                    patch_level = cont_patch_level
+                    resize_factor = cont_resize_factor
                     running_x_coords.extend(x_coords)
                     running_y_coords.extend(y_coords)
                     running_tissue_pct.extend(tissue_pct)
