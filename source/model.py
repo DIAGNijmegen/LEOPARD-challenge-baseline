@@ -92,10 +92,12 @@ class MIL():
                 # concatenate the gathered features and indices
                 slide_feature = torch.cat(gathered_feature, dim=0)
                 patch_indices = torch.cat(gathered_indices, dim=0)
+                # remove duplicates
+                unique_indices = torch.unique(patch_indices)
                 # create a final tensor to store the features in the correct order
-                slide_feature_ordered = torch.zeros_like(slide_feature, device=self.device)
+                slide_feature_ordered = torch.zeros((len(unique_indices), self.npatch, self.features_dim), device=self.device)
                 # insert each feature into its correct position based on patch_indices
-                slide_feature_ordered[patch_indices] = slide_feature
+                slide_feature_ordered[unique_indices] = slide_feature[unique_indices]
             else:
                 slide_feature_ordered = None
         else:
