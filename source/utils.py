@@ -107,6 +107,7 @@ def save_patches(wsi_fp, coord, tissue_pct, patch_level, region_size, factor, ba
                 desc="Patch saving",
                 unit=" patch",
                 total=len(iterable),
+                leave=False,
             ):
                 pass
     else:

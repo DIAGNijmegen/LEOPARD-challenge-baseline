@@ -10,7 +10,7 @@ from torchvision.transforms import CenterCrop
 
 from source.vision_transformer import vit_small, vit4k_xs
 from source.model_utils import Attn_Net_Gated, update_state_dict
-
+from source.dist_utils import is_main_process
 
 class CustomViT(nn.Module):
     def __init__(
@@ -36,16 +36,16 @@ class CustomViT(nn.Module):
         )
 
         if Path(pretrained_weights).is_file():
-            if verbose:
+            if verbose and is_main_process():
                 print("Loading pretrained weights for ViT-S")
             state_dict = torch.load(pretrained_weights, map_location="cpu")
             state_dict, msg = update_state_dict(self.vit.state_dict(), state_dict)
             self.vit.load_state_dict(state_dict, strict=False)
-            if verbose:
+            if verbose and is_main_process():
                 print(f"Pretrained weights found at {pretrained_weights}")
                 print(msg)
 
-        elif verbose:
+        elif verbose and is_main_process():
             print(
                 f"{pretrained_weights} doesnt exist ; please provide path to existing file"
             )
@@ -89,16 +89,16 @@ class UNI(nn.Module):
         self.vit = timm.create_model("vit_large_patch16_224", img_size=224, patch_size=16, init_values=1e-5, num_classes=0, dynamic_img_size=True)
 
         if Path(pretrained_weights).is_file():
-            if verbose:
+            if verbose and is_main_process():
                 print("Loading pretrained weights for UNI")
             state_dict = torch.load(pretrained_weights, map_location="cpu")
             state_dict, msg = update_state_dict(self.vit.state_dict(), state_dict)
             self.vit.load_state_dict(state_dict, strict=True)
-            if verbose:
+            if verbose and is_main_process():
                 print(f"Pretrained weights found at {pretrained_weights}")
                 print(msg)
 
-        elif verbose:
+        elif verbose and is_main_process():
             print(
                 f"{pretrained_weights} doesnt exist ; please provide path to existing file"
             )
@@ -215,13 +215,15 @@ class HierarchicalViT(nn.Module):
 
     def load_weights(self):
         if self.pretrained_weights and Path(self.pretrained_weights).is_file():
-            print("Loading pretrained weights for HViT-XS")
+            if is_main_process():
+                print("Loading pretrained weights for HViT-XS")
             state_dict = torch.load(self.pretrained_weights, map_location="cpu")
             state_dict, msg = update_state_dict(self.state_dict(), state_dict)
             self.load_state_dict(state_dict, strict=False)
-            print(f"Pretrained weights found at {self.pretrained_weights}")
-            print(msg)
-        else:
+            if is_main_process():
+                print(f"Pretrained weights found at {self.pretrained_weights}")
+                print(msg)
+        elif is_main_process():
             print(f"{self.pretrained_weights} doesn't exist; please provide path to an existing file")
 
     def __repr__(self) -> str:

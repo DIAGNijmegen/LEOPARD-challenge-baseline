@@ -1,14 +1,16 @@
 import time
+import os
 import tqdm
 import torch
 import pandas as pd
 import torch.nn as nn
+import torch.distributed as dist
 
 from torch.cuda.amp import autocast
 
 from source.dataset import PatchDatasetFromDisk
 from source.utils import load_inputs
-
+from source.dist_utils import is_main_process
 
 class MIL():
     def __init__(
@@ -22,6 +24,7 @@ class MIL():
         batch_size: int = 1,
         num_workers_data_loading: int = 1,
         backend: str = "openslide",
+        distributed: bool = False,
     ):
 
         self.spacing = spacing
@@ -33,7 +36,16 @@ class MIL():
 
         self.npatch = int(region_size // patch_size) ** 2
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.distributed = distributed
+        self.device_id = 0
+        if self.distributed:
+            self.device = torch.device(f"cuda:{dist.get_rank()}")
+            self.device_id = dist.get_rank()
+        else:
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            else:
+                self.device = torch.device("cpu")
 
         self.feature_extractor = feature_extractor.to(self.device, non_blocking=True)
         self.feature_extractor.eval()
@@ -43,25 +55,63 @@ class MIL():
 
     def extract_slide_feature(self, wsi_fp):
         dataset = PatchDatasetFromDisk(wsi_fp)
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, num_workers=self.num_workers_data_loading, pin_memory=True)
+        if self.distributed:
+            sampler = torch.utils.data.DistributedSampler(dataset)
+        else:
+            sampler = None
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, sampler=sampler, num_workers=self.num_workers_data_loading, pin_memory=True)
         M = len(dataset)
-        slide_feature = torch.zeros(M, self.npatch, self.features_dim).to(self.device, non_blocking=True)
+        # slide_feature = torch.zeros(M, self.npatch, self.features_dim, device=self.device)
+        # patch_indices = torch.zeros(M, dtype=torch.long, device=self.device)  # track indices
+        patch_features, patch_indices = [], []
         with torch.no_grad():
             with tqdm.tqdm(
                 dataloader,
-                desc=f"Processing {wsi_fp.stem}",
+                desc=f"GPU {self.device_id}: {wsi_fp.stem}",
                 unit=" region",
                 unit_scale=self.batch_size,
                 leave=False,
+                position=1+self.device_id,
             ) as t:
                 for batch in t:
                     idx, img = batch
                     img = img.to(self.device, non_blocking=True)
                     features = self.extract_patch_feature(img)
-                    for i, j in enumerate(idx):
-                        slide_feature[j] = features[i]
+                    # for i, j in enumerate(idx):
+                    #     slide_feature[j] = features[i]
+                    #     patch_indices[j] = j
+                    patch_features.append(features)
+                    patch_indices.append(idx)
                     torch.cuda.empty_cache()
-        return slide_feature
+
+        # concatenate features and indices across batches
+        slide_feature = torch.cat(patch_features, dim=0)
+        patch_indices = torch.cat(patch_indices, dim=0)
+        # ensure slide_feature and patch_indices are contiguous and on the correct device
+        slide_feature = slide_feature.contiguous().to(self.device)
+        patch_indices = patch_indices.contiguous().to(self.device)
+        if self.distributed:
+            # gather features and indices from all GPUs
+            gathered_slide_feature = [torch.zeros_like(slide_feature, device=self.device) for _ in range(dist.get_world_size())]
+            gathered_patch_indices = [torch.zeros_like(patch_indices, device=self.device) for _ in range(dist.get_world_size())]
+            dist.all_gather(gathered_slide_feature, slide_feature)
+            dist.all_gather(gathered_patch_indices, patch_indices)
+            if is_main_process():
+                # concatenate the gathered features and indices
+                slide_feature = torch.cat(gathered_slide_feature, dim=0)
+                patch_indices = torch.cat(gathered_patch_indices, dim=0)
+                # create a final tensor to store the features in the correct order
+                slide_feature_ordered = torch.zeros_like(slide_feature, device=self.device)
+                # insert each feature into its correct position based on patch_indices
+                slide_feature_ordered[patch_indices] = slide_feature
+            else:
+                slide_feature_ordered = None
+        else:
+            # create a final tensor to store the features in the correct order
+            slide_feature_ordered = torch.zeros_like(slide_feature, device=self.device)
+            # insert each feature into its correct position based on patch_indices
+            slide_feature_ordered[patch_indices] = slide_feature
+        return slide_feature_ordered
 
     def extract_patch_feature(self, patch):
         with torch.no_grad():
@@ -104,11 +154,15 @@ class MIL():
             unit=" case",
             total=len(case_list),
             leave=True,
+            disable=not is_main_process(),
+            position=0,
         ) as t:
             for wsi_fp in t:
                 start_time = time.time()
-                tqdm.tqdm.write(f"Processing {wsi_fp.stem}")
                 feature = self.extract_slide_feature(wsi_fp)
+                if self.distributed and feature is None:
+                    continue  # skip further processing if this is not the main process
+                feature = feature.to(self.device, non_blocking=True)
                 nregion = len(feature)
                 risk = self.predict(feature)
                 overall_survival = self.postprocess(risk)
@@ -116,7 +170,8 @@ class MIL():
                 nregions.append(nregion)
                 processing_times.append(processing_time)
                 predictions.append(overall_survival)
-        self.write_outputs(case_list, predictions, nregions, processing_times)
+        if not self.distributed or is_main_process():
+            self.write_outputs(case_list, predictions, nregions, processing_times)
         return predictions
 
     def postprocess(self, risk):

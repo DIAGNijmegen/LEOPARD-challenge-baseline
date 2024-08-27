@@ -2,9 +2,11 @@ import os
 import json
 import tqdm
 import torch
+import torch.distributed as dist
 
 from pathlib import Path
 
+from source.dist_utils import is_main_process, is_dist_avail_and_initialized
 from source.utils import load_inputs, extract_coordinates, save_patches
 from source.model import MIL
 from source.components import UNI, HierarchicalViT
@@ -16,12 +18,17 @@ RESOURCE_PATH = Path("/opt/app/resources")
 
 def run():
 
-    _show_torch_cuda_info()
-
-    # print contents of input folder
-    print("input folder contents:")
-    print_directory_contents(INPUT_PATH)
-    print("=+=" * 10)
+    distributed = torch.cuda.device_count() > 1
+    if distributed:
+        torch.distributed.init_process_group(backend="nccl")
+        if is_main_process():
+            print(f"Distributed session successfully initialized")
+    if is_main_process():
+        _show_torch_cuda_info()
+        # print contents of input folder
+        print("input folder contents:")
+        print_directory_contents(INPUT_PATH)
+        print("=+=" * 10)
 
     # set baseline parameters
     spacing = 0.5
@@ -34,24 +41,30 @@ def run():
     batch_size = 4
 
     # preprocess input
-    case_list, mask_list = load_inputs()
-    with tqdm.tqdm(
-        zip(case_list, mask_list),
-        desc="Extracting patch coordinates",
-        unit=" case",
-        total=len(case_list),
-        leave=True,
-    ) as t:
-        for wsi_fp, mask_fp in t:
-            tqdm.tqdm.write(f"Preprocessing {wsi_fp.stem}")
-            coord, tissue_pct, level, factor = extract_coordinates(wsi_fp, mask_fp, spacing, region_size, num_workers=num_workers_preprocessing)
-            save_patches(wsi_fp, coord, tissue_pct, level, region_size, factor, backend="asap", nregion_max=nregion_max, num_workers=num_workers_preprocessing)
-    print("=+=" * 10)
+    if is_main_process():
+        case_list, mask_list = load_inputs()
+        with tqdm.tqdm(
+            zip(case_list, mask_list),
+            desc="Extracting patch coordinates",
+            unit=" case",
+            total=len(case_list),
+            leave=True,
+        ) as t:
+            for wsi_fp, mask_fp in t:
+                tqdm.tqdm.write(f"Preprocessing {wsi_fp.stem}")
+                coord, tissue_pct, level, factor = extract_coordinates(wsi_fp, mask_fp, spacing, region_size, num_workers=num_workers_preprocessing)
+                save_patches(wsi_fp, coord, tissue_pct, level, region_size, factor, backend="asap", nregion_max=nregion_max, num_workers=num_workers_preprocessing)
+        print("=+=" * 10)
+
+    # wait for all processes to finish preprocessing
+    if distributed and is_dist_avail_and_initialized():
+        dist.barrier()
 
     # instantiate feature extractor
     feature_extractor_weights = Path(RESOURCE_PATH, f"feature_extractor.pt")
     feature_extractor = UNI(feature_extractor_weights)
-    print("=+=" * 10)
+    if is_main_process():
+        print("=+=" * 10)
 
     # instantiate feature aggregator
     feature_aggregator_weights = Path(RESOURCE_PATH, f"feature_aggregator.pt")
@@ -61,7 +74,8 @@ def run():
         region_size=region_size,
         input_embed_dim=features_dim,
     )
-    print("=+=" * 10)
+    if is_main_process():
+        print("=+=" * 10)
 
     # instantiate the algorithm
     algorithm = MIL(
@@ -73,21 +87,21 @@ def run():
         backend="asap",
         batch_size=batch_size,
         num_workers_data_loading=num_workers_data_loading,
+        distributed=distributed,
     )
 
     # forward pass
     predictions = algorithm.process()
-    print("=+=" * 10)
-
-    # save output
-    write_json_file(
-        location=OUTPUT_PATH / "overall-survival-years.json",
-        content=predictions[0]
-    )
-
-    # print contents of output folder
-    print("output folder contents:")
-    print_directory_contents(OUTPUT_PATH)
+    if is_main_process():
+        print("=+=" * 10)
+        # save output
+        write_json_file(
+            location=OUTPUT_PATH / "overall-survival-years.json",
+            content=predictions[0]
+        )
+        # print contents of output folder
+        print("output folder contents:")
+        print_directory_contents(OUTPUT_PATH)
 
     return 0
 
