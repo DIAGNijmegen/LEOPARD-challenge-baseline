@@ -73,20 +73,41 @@ class CustomViT(nn.Module):
         return patch_feature
 
 
-class UNI(nn.Module):
+class FM(nn.Module):
     def __init__(
         self,
+        name: str,
         pretrained_weights: str,
         patch_size: int = 256,
         mini_patch_size: int = 16,
         verbose: bool = True,
     ):
-        super(UNI, self).__init__()
+        super(FM, self).__init__()
 
         self.ps = patch_size
         self.center_crop = CenterCrop(224)
         assert mini_patch_size == 16, "mini_patch_size must be 16"
-        self.vit = timm.create_model("vit_large_patch16_224", img_size=224, patch_size=16, init_values=1e-5, num_classes=0, dynamic_img_size=True)
+        if name == "uni":
+            self.vit = timm.create_model("vit_large_patch16_224", img_size=224, patch_size=16, init_values=1e-5, num_classes=0, dynamic_img_size=True)
+        elif name == "kaiko":
+            pretrained_cfg = {
+                'tag': 'augreg2_in21k_ft_in1k',
+                'custom_load': False,
+                'input_size': [3, 224, 224],
+                'fixed_input_size': True,
+                'interpolation': 'bicubic',
+                'crop_pct': 0.9,
+                'crop_mode': 'center',
+                'mean': [0.5, 0.5, 0.5],
+                'std': [0.5, 0.5, 0.5],
+                'num_classes': 0,
+                'pool_size': None,
+                'first_conv': 'patch_embed.proj',
+                'classifier': 'head',
+            }
+            self.vit = timm.create_model("vit_base_patch16_224", pretrained_cfg=pretrained_cfg)
+        else:
+            raise ValueError(f"Unknown FM name '{name}'")
 
         if Path(pretrained_weights).is_file():
             if verbose and is_main_process():
@@ -117,7 +138,7 @@ class UNI(nn.Module):
         # apply center crop to fit expected input size
         cropped_x = torch.stack([self.center_crop(patch) for patch in x])   # [B*num_patches, 3, 224, 224]
 
-        patch_feature = self.vit(cropped_x).detach()  # [B*num_patches, 1024]
+        patch_feature = self.vit(cropped_x).detach()  # [B*num_patches, out_features_dim]
         patch_feature = patch_feature.reshape(-1, num_patches, patch_feature.shape[-1])
         return patch_feature
 

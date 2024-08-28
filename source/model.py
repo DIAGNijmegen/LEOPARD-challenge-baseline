@@ -169,5 +169,5 @@ class MIL():
     def postprocess(self, risk):
         # risk_shifted = risk + abs(min(risk))
         # overall_survival_years = risk_shifted * self.risk_scaling_factor
-        overall_survival_years = risk
+        overall_survival_years = -risk
         return overall_survival_years

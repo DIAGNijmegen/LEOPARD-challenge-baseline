@@ -6,11 +6,12 @@ import argparse
 import torch.distributed as dist
 
 from pathlib import Path
+from datetime import timedelta
 
 from source.dist_utils import is_main_process, is_dist_avail_and_initialized
 from source.utils import load_inputs, extract_coordinates, save_patches
 from source.model import MIL
-from source.components import UNI, HierarchicalViT
+from source.components import FM, HierarchicalViT
 
 INPUT_PATH = Path("/input")
 OUTPUT_PATH = Path("/output")
@@ -21,6 +22,7 @@ def get_args_parser(add_help: bool = True):
     parser = argparse.ArgumentParser("Local HViT", add_help=add_help)
     parser.add_argument("--spacing", default=0.5, type=float, help="pixel spacing in mpp")
     parser.add_argument("--region_size", default=2048, type=int, help="context size")
+    parser.add_argument("--fm", default="uni", type=str, help="name of FM to use as tile encoder")
     parser.add_argument("--features_dim", default=1024, type=int, help="tile-level features dimension")
     parser.add_argument("--nregion_max", default=None, type=int, help="maximum number of regions to keep")
     return parser
@@ -30,7 +32,8 @@ def run(args):
 
     distributed = torch.cuda.device_count() > 1
     if distributed:
-        torch.distributed.init_process_group(backend="nccl")
+        timeout = timedelta(hours=10)
+        torch.distributed.init_process_group(backend="nccl", timeout=timeout)
         if is_main_process():
             print(f"Distributed session successfully initialized")
     if is_main_process():
@@ -43,6 +46,7 @@ def run(args):
     # set baseline parameters
     spacing = args.spacing
     region_size = args.region_size
+    fm = args.fm
     features_dim = args.features_dim
     nbins = 4
     nregion_max = args.nregion_max
@@ -72,7 +76,7 @@ def run(args):
 
     # instantiate feature extractor
     feature_extractor_weights = Path(RESOURCE_PATH, f"feature_extractor.pt")
-    feature_extractor = UNI(feature_extractor_weights)
+    feature_extractor = FM(fm, feature_extractor_weights)
     if is_main_process():
         print("=+=" * 10)
 
