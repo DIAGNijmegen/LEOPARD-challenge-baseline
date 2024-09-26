@@ -1,17 +1,14 @@
 import os
 import json
-import tqdm
 import torch
 import argparse
-import torch.distributed as dist
 
 from pathlib import Path
 from datetime import timedelta
 
-from source.dist_utils import is_main_process, is_dist_avail_and_initialized
-from source.utils import load_inputs, extract_coordinates, save_patches
+from source.dist_utils import is_main_process
 from source.model import MIL
-from source.components import FM, HierarchicalViT
+from source.components import HierarchicalViT
 
 INPUT_PATH = Path("/input")
 OUTPUT_PATH = Path("/output")
@@ -20,11 +17,8 @@ RESOURCE_PATH = Path("/opt/app/resources")
 
 def get_args_parser(add_help: bool = True):
     parser = argparse.ArgumentParser("Local HViT", add_help=add_help)
-    parser.add_argument("--spacing", default=0.5, type=float, help="pixel spacing in mpp")
     parser.add_argument("--region_size", default=2048, type=int, help="context size")
-    parser.add_argument("--fm", default="uni", type=str, help="name of FM to use as tile encoder")
     parser.add_argument("--features_dim", default=1024, type=int, help="tile-level features dimension")
-    parser.add_argument("--nregion_max", default=None, type=int, help="maximum number of regions to keep")
     return parser
 
 
@@ -44,41 +38,9 @@ def run(args):
         print("=+=" * 10)
 
     # set baseline parameters
-    spacing = args.spacing
     region_size = args.region_size
-    fm = args.fm
     features_dim = args.features_dim
     nbins = 4
-    nregion_max = args.nregion_max
-    num_workers_data_loading = 4
-    num_workers_preprocessing = 4
-    batch_size = 4
-
-    # preprocess input
-    if is_main_process():
-        case_list, mask_list = load_inputs()
-        with tqdm.tqdm(
-            zip(case_list, mask_list),
-            desc="Extracting patch coordinates",
-            unit=" case",
-            total=len(case_list),
-            leave=True,
-        ) as t:
-            for wsi_fp, mask_fp in t:
-                tqdm.tqdm.write(f"Preprocessing {wsi_fp.stem}")
-                coord, tissue_pct, level, factor = extract_coordinates(wsi_fp, mask_fp, spacing, region_size, num_workers=num_workers_preprocessing)
-                save_patches(wsi_fp, coord, tissue_pct, level, region_size, factor, backend="asap", nregion_max=nregion_max, num_workers=num_workers_preprocessing)
-        print("=+=" * 10)
-
-    # wait for all processes to finish preprocessing
-    if distributed and is_dist_avail_and_initialized():
-        dist.barrier()
-
-    # instantiate feature extractor
-    feature_extractor_weights = Path(RESOURCE_PATH, f"feature_extractor.pt")
-    feature_extractor = FM(fm, feature_extractor_weights)
-    if is_main_process():
-        print("=+=" * 10)
 
     # instantiate feature aggregator
     feature_aggregator_weights = Path(RESOURCE_PATH, f"feature_aggregator.pt")
@@ -93,14 +55,8 @@ def run(args):
 
     # instantiate the algorithm
     algorithm = MIL(
-        feature_extractor,
+        Path("/input/features"),
         feature_aggregator,
-        spacing=spacing,
-        region_size=region_size,
-        features_dim=features_dim,
-        backend="asap",
-        batch_size=batch_size,
-        num_workers_data_loading=num_workers_data_loading,
         distributed=distributed,
     )
 
