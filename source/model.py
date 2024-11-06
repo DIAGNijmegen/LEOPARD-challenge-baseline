@@ -17,7 +17,7 @@ class MIL():
         self,
         features_dir: Path,
         feature_aggregator: nn.Module,
-        mixed_precision: bool = False
+        mixed_precision: bool = False,
         distributed: bool = False,
     ):
 
