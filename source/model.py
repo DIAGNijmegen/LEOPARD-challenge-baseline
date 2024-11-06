@@ -5,20 +5,23 @@ import pandas as pd
 import torch.nn as nn
 import torch.distributed as dist
 
-from torch.cuda.amp import autocast
 from pathlib import Path
+from contextlib import nullcontext
 
 from source.utils import load_inputs
 from source.dist_utils import is_main_process
+
 
 class MIL():
     def __init__(
         self,
         features_dir: Path,
         feature_aggregator: nn.Module,
+        mixed_precision: bool = False
         distributed: bool = False,
     ):
 
+        self.mixed_precision = mixed_precision
         self.distributed = distributed
         self.device_id = 0
         if self.distributed:
@@ -54,8 +57,11 @@ class MIL():
         return df
 
     def predict(self, feature):
+        autocast_context = nullcontext()
+        if self.mixed_precision:
+            autocast_context = torch.autocast(device_type="cuda", dtype=torch.float16)
         with torch.no_grad():
-            with autocast():
+            with autocast_context:
                 logit = self.feature_aggregator(feature)
                 hazard = torch.sigmoid(logit)
                 surv = torch.cumprod(1 - hazard, dim=1)

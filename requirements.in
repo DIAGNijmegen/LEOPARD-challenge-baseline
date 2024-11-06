@@ -1,5 +1,4 @@
 h5py
-timm
 wandb
 numpy==%NUMPY_VERSION%
 pandas
@@ -11,6 +10,5 @@ matplotlib
 scikit-learn
 scikit-survival
 tqdm
-wholeslidedata
 torch==%PYTORCH_VERSION%
 torchvision==%TORCHVISION_VERSION%

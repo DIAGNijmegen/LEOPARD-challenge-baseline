@@ -17,8 +17,9 @@ RESOURCE_PATH = Path("/opt/app/resources")
 
 def get_args_parser(add_help: bool = True):
     parser = argparse.ArgumentParser("Local HViT", add_help=add_help)
-    parser.add_argument("--region_size", default=2048, type=int, help="context size")
-    parser.add_argument("--features_dim", default=1024, type=int, help="tile-level features dimension")
+    parser.add_argument("--region-size", default=2048, type=int, help="context size")
+    parser.add_argument("--features-dim", default=1024, type=int, help="tile-level features dimension")
+    parser.add_argument("--mixed-precision", default=False, type=bool, help="enable mixed precision")
     return parser
 
 
@@ -40,6 +41,7 @@ def run(args):
     # set baseline parameters
     region_size = args.region_size
     features_dim = args.features_dim
+    mixed_precision = args.mixed_precision
     nbins = 4
 
     # instantiate feature aggregator
@@ -55,8 +57,9 @@ def run(args):
 
     # instantiate the algorithm
     algorithm = MIL(
-        Path("/input/features"),
+        Path(INPUT_PATH, "features"),
         feature_aggregator,
+        mixed_precision=mixed_precision,
         distributed=distributed,
     )
 

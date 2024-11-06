@@ -1,5 +1,4 @@
 h5py
-timm
 wandb
 numpy
 pandas
@@ -11,6 +10,5 @@ matplotlib
 scikit-learn
 scikit-survival
 tqdm
-wholeslidedata
 torch
 torchvision==0.13.0
