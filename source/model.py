@@ -5,6 +5,7 @@ import pandas as pd
 import torch.nn as nn
 import torch.distributed as dist
 
+from typing import List
 from pathlib import Path
 from contextlib import nullcontext
 
@@ -18,10 +19,12 @@ class MIL():
         features_dir: Path,
         feature_aggregator: nn.Module,
         mixed_precision: bool = False,
+        restrict_ids: List[str] = None,
         distributed: bool = False,
     ):
 
         self.mixed_precision = mixed_precision
+        self.restrict_ids = restrict_ids
         self.distributed = distributed
         self.device_id = 0
         if self.distributed:
@@ -72,7 +75,7 @@ class MIL():
         """
         Read inputs from /input, process with your algorithm and write to /output
         """
-        features_list = load_inputs()
+        features_list = load_inputs(self.restrict_ids)
         predictions, nregions, processing_times = [], [], []
         with tqdm.tqdm(
             features_list,

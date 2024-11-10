@@ -20,6 +20,7 @@ def get_args_parser(add_help: bool = True):
     parser.add_argument("--region-size", default=2048, type=int, help="context size")
     parser.add_argument("--features-dim", default=1024, type=int, help="tile-level features dimension")
     parser.add_argument("--mixed-precision", default=False, type=bool, help="enable mixed precision")
+    parser.add_argument("--restrict", default=None, type=str, help="path to a .txt file with ids of cases we want to restrict inference on")
     return parser
 
 
@@ -44,6 +45,14 @@ def run(args):
     mixed_precision = args.mixed_precision
     nbins = 4
 
+    # (optionally) restrict inference
+    restrict_ids = None
+    if args.restrict is not None:
+        restrict_file = Path(args.restrict)
+        assert restrict_file.is_file()
+        with open(restrict_file, "r") as f:
+            restrict_ids = [x.strip() for x in f.readlines()]
+
     # instantiate feature aggregator
     feature_aggregator_weights = Path(RESOURCE_PATH, f"feature_aggregator.pt")
     feature_aggregator = HierarchicalViT(
@@ -60,6 +69,7 @@ def run(args):
         Path(INPUT_PATH, "features"),
         feature_aggregator,
         mixed_precision=mixed_precision,
+        restrict_ids=restrict_ids,
         distributed=distributed,
     )
 
