@@ -1,5 +1,6 @@
 import os
 import tqdm
+import numpy as np
 import wholeslidedata as wsd
 import multiprocessing as mp
 
@@ -54,38 +55,52 @@ def load_inputs():
     return sorted_case_list, sorted_mask_list
 
 
-def extract_coordinates(wsi_fp, mask_fp, spacing, region_size, num_workers: int = 1):
+def extract_coordinates(wsi_fp, mask_fp, spacing, patch_size, num_workers: int = 1):
     wsi = WholeSlideImage(wsi_fp, mask_fp)
-    coordinates, tissue_percentages, patch_level, resize_factor = wsi.get_patch_coordinates(spacing, region_size, num_workers=num_workers)
+    coordinates, tissue_percentages, patch_level, resize_factor = wsi.get_patch_coordinates(spacing, patch_size, num_workers=num_workers)
     sorted_coordinates, sorted_tissue_percentages = sort_coords_with_tissue(coordinates, tissue_percentages)
     return sorted_coordinates, sorted_tissue_percentages, patch_level, resize_factor
 
 
-def save_patch(coord, wsi_fp, spacing, patch_size, resize_factor, backend: str = "asap"):
-    region_size = patch_size // resize_factor
+def save_coordinates(wsi_fp, coordinates, patch_level, patch_size, resize_factor, save_dir: str):
+    wsi_name = wsi_fp.stem
+    output_path = Path(save_dir, f"{wsi_name}.npy")
+    x = list(coordinates[:, 0])  # defined w.r.t level 0
+    y = list(coordinates[:, 1])  # defined w.r.t level 0
+    npatch = len(x)
+    patch_size_resized = int(patch_size * resize_factor)
+    data = []
+    for i in range(npatch):
+        data.append([x[i], y[i], patch_size_resized, patch_level, resize_factor])
+    data_arr = np.array(data, dtype=int)
+    np.save(output_path, data_arr)
+    return output_path
+
+
+def save_patch(coord, wsi_fp, spacing, patch_size, resize_factor, patch_dir: str, backend: str = "asap"):
+    patch_size_resized = int(patch_size * resize_factor)
     x, y = coord
     wsi = wsd.WholeSlideImage(wsi_fp, backend=backend)
-    patch = wsi.get_patch(x, y, patch_size, patch_size, spacing=spacing, center=False)
+    patch = wsi.get_patch(x, y, patch_size_resized, patch_size_resized, spacing=spacing, center=False)
     pil_patch = Image.fromarray(patch).convert("RGB")
     if resize_factor != 1:
-        assert patch_size % region_size == 0, f"width ({patch_size}) is not divisible by region_size ({region_size})"
-        pil_patch = pil_patch.resize((region_size, region_size))
-    patch_fp = Path(f"/tmp/patches/{wsi_fp.stem}/{int(x)}_{int(y)}.jpg")
+        assert patch_size_resized % patch_size == 0, f"width ({patch_size_resized}) is not divisible by patch_size ({patch_size})"
+        pil_patch = pil_patch.resize((patch_size, patch_size))
+    patch_fp = Path(patch_dir, f"{int(x)}_{int(y)}.jpg")
     pil_patch.save(patch_fp)
     return patch_fp
 
 
 def save_patch_mp(args):
-    coord, wsi_fp, spacing, patch_size, resize_factor = args
-    return save_patch(coord, wsi_fp, spacing, patch_size, resize_factor)
+    coord, wsi_fp, spacing, patch_size, resize_factor, patch_dir = args
+    return save_patch(coord, wsi_fp, spacing, patch_size, resize_factor, patch_dir)
 
 
-def save_patches(wsi_fp, coord, tissue_pct, patch_level, region_size, factor, backend: str = "asap", nregion_max: Optional[int] = None, num_workers: int = 1):
+def save_patches(wsi_fp, coord, tissue_pct, patch_level, patch_size, resize_factor, patch_root_dir: str, backend: str = "asap", nregion_max: Optional[int] = None, num_workers: int = 1):
     wsi_name = wsi_fp.stem
     wsi = wsd.WholeSlideImage(wsi_fp, backend=backend)
     patch_spacing = wsi.spacings[patch_level]
-    patch_size = region_size * factor
-    patch_dir = Path(f"/tmp/patches/{wsi_name}/")
+    patch_dir = Path(patch_root_dir, f"{wsi_name}")
     patch_dir.mkdir(parents=True, exist_ok=True)
     # filter out patches with low tissue percentage
     coord = keep_top_regions(coord, tissue_pct, nregion_max)
@@ -98,7 +113,7 @@ def save_patches(wsi_fp, coord, tissue_pct, patch_level, region_size, factor, ba
                 num_workers, int(os.environ["SLURM_JOB_CPUS_PER_NODE"])
             )
         iterable = [
-            (c, wsi_fp, patch_spacing, patch_size, factor)
+            (c, wsi_fp, patch_spacing, patch_size, resize_factor, patch_dir)
             for c in coord
         ]
         with mp.Pool(num_workers) as pool:
@@ -118,4 +133,4 @@ def save_patches(wsi_fp, coord, tissue_pct, patch_level, region_size, factor, ba
             leave=False,
         ) as t:
             for c in t:
-                save_patch(c, wsi, wsi_name, patch_spacing, patch_size, factor)
+                save_patch(c, wsi, wsi_name, patch_spacing, patch_size, resize_factor, patch_dir)

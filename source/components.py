@@ -6,11 +6,13 @@ import torch.nn.functional as F
 from pathlib import Path
 from typing import Optional
 from einops import rearrange
-from torchvision.transforms import CenterCrop
+from timm.data import resolve_data_config
+from timm.data.transforms_factory import create_transform
 
 from source.vision_transformer import vit_small, vit4k_xs
 from source.model_utils import Attn_Net_Gated, update_state_dict
 from source.dist_utils import is_main_process
+
 
 class CustomViT(nn.Module):
     def __init__(
@@ -73,42 +75,19 @@ class CustomViT(nn.Module):
         return patch_feature
 
 
-class FM(nn.Module):
-    def __init__(
-        self,
-        name: str,
-        pretrained_weights: str,
-        patch_size: int = 256,
-        mini_patch_size: int = 16,
-        verbose: bool = True,
-    ):
-        super(FM, self).__init__()
+class FeatureExtractor(nn.Module):
+    def __init__(self, pretrained_weights: str, region_size: int, patch_size: int = 256):
+        super(FeatureExtractor, self).__init__()
+        self.encoder = self.build_encoder()
+        self.load_weights(pretrained_weights)
+        self.num_patches = (region_size // patch_size) ** 2
+        for param in self.encoder.parameters():
+            param.requires_grad = False
 
-        self.ps = patch_size
-        self.center_crop = CenterCrop(224)
-        assert mini_patch_size == 16, "mini_patch_size must be 16"
-        if name == "uni":
-            self.vit = timm.create_model("vit_large_patch16_224", img_size=224, patch_size=16, init_values=1e-5, num_classes=0, dynamic_img_size=True)
-        elif name == "kaiko":
-            pretrained_cfg = {
-                'tag': 'augreg2_in21k_ft_in1k',
-                'custom_load': False,
-                'input_size': [3, 224, 224],
-                'fixed_input_size': True,
-                'interpolation': 'bicubic',
-                'crop_pct': 0.9,
-                'crop_mode': 'center',
-                'mean': [0.5, 0.5, 0.5],
-                'std': [0.5, 0.5, 0.5],
-                'num_classes': 0,
-                'pool_size': None,
-                'first_conv': 'patch_embed.proj',
-                'classifier': 'head',
-            }
-            self.vit = timm.create_model("vit_base_patch16_224", pretrained_cfg=pretrained_cfg)
-        else:
-            raise ValueError(f"Unknown FM name '{name}'")
+    def build_encoder(self):
+        raise NotImplementedError
 
+    def load_weights(self, pretrained_weights, verbose: bool = True):
         if Path(pretrained_weights).is_file():
             if verbose and is_main_process():
                 print("Loading pretrained weights for UNI")
@@ -124,23 +103,54 @@ class FM(nn.Module):
                 f"{pretrained_weights} doesnt exist ; please provide path to existing file"
             )
 
-        for param in self.vit.parameters():
-            param.requires_grad = False
+    def get_transforms(self):
+        data_config = resolve_data_config(
+            self.encoder.pretrained_cfg, model=self.encoder
+        )
+        transforms = create_transform(**data_config)
+        return transforms
 
     def forward(self, x):
-        # x = [B, 3, region_size, region_size]
-        num_patches = (x.shape[2] // self.ps) ** 2
-        x = x.unfold(2, self.ps, self.ps).unfold(
-            3, self.ps, self.ps
-        )  # [B, 3, npatch, region_size, ps] -> [B, 3, npatch, npatch, ps, ps]
-        x = rearrange(x, "b c p1 p2 w h -> (b p1 p2) c w h")  # [B*num_patches, 3, ps, ps]
-
-        # apply center crop to fit expected input size
-        cropped_x = torch.stack([self.center_crop(patch) for patch in x])   # [B*num_patches, 3, 224, 224]
-
-        patch_feature = self.vit(cropped_x).detach()  # [B*num_patches, out_features_dim]
-        patch_feature = patch_feature.reshape(-1, num_patches, patch_feature.shape[-1])
+        patch_feature = self.encoder(x).detach()  # [B*num_patches, out_features_dim]
+        patch_feature = patch_feature.reshape(-1, self.num_patches, patch_feature.shape[-1]) # [B, num_patches, out_features_dim]
         return patch_feature
+
+
+class UNI(FeatureExtractor):
+    def __init__(self, pretrained_weights: str, region_size: int, patch_size: int = 256):
+        super(UNI, self).__init__(pretrained_weights, region_size, patch_size)
+        if patch_size == 256:
+            self.encoder.pretrained_cfg["input_size"] = [3, 224, 224]
+            self.encoder.pretrained_cfg["crop_pct"] = 224 / 256  # ensure Resize is 256
+        self.encoder.pretrained_cfg[
+            "interpolation"
+        ] = "bicubic"
+
+    def build_encoder(self):
+        return timm.create_model("vit_large_patch16_224", img_size=224, patch_size=16, init_values=1e-5, num_classes=0, dynamic_img_size=True)
+
+
+class Kaiko(FeatureExtractor):
+    def __init__(self, pretrained_weights: str, region_size: int, patch_size: int = 256):
+        super(Kaiko, self).__init__(pretrained_weights, region_size, patch_size)
+
+    def build_encoder(self):
+        pretrained_cfg = {
+            'tag': 'augreg2_in21k_ft_in1k',
+            'custom_load': False,
+            'input_size': [3, 224, 224],
+            'fixed_input_size': True,
+            'interpolation': 'bicubic',
+            'crop_pct': 0.9,
+            'crop_mode': 'center',
+            'mean': [0.5, 0.5, 0.5],
+            'std': [0.5, 0.5, 0.5],
+            'num_classes': 0,
+            'pool_size': None,
+            'first_conv': 'patch_embed.proj',
+            'classifier': 'head',
+        }
+        return timm.create_model("vit_base_patch16_224", pretrained_cfg=pretrained_cfg)
 
 
 class HierarchicalViT(nn.Module):

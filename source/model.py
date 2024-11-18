@@ -1,16 +1,18 @@
 import time
-import os
 import tqdm
 import torch
+import torchvision
 import pandas as pd
 import torch.nn as nn
 import torch.distributed as dist
 
-from torch.cuda.amp import autocast
+from contextlib import nullcontext
 
-from source.dataset import PatchDatasetFromDisk
+from source.dataset import PatchDataset, PatchDatasetFromDisk
+from source.augmentations import RegionUnfolding
 from source.utils import load_inputs
 from source.dist_utils import is_main_process
+
 
 class MIL():
     def __init__(
@@ -20,8 +22,11 @@ class MIL():
         spacing: float,
         region_size: int,
         features_dim: int,
+        coordinates_dir: str,
         patch_size: int = 256,
         batch_size: int = 1,
+        mixed_precision: bool = False,
+        load_patches_from_disk: bool = False,
         num_workers_data_loading: int = 1,
         backend: str = "openslide",
         distributed: bool = False,
@@ -33,6 +38,8 @@ class MIL():
         self.num_workers_data_loading = num_workers_data_loading
         self.backend = backend
         self.features_dim = features_dim
+        self.coordinates_dir = coordinates_dir
+        self.load_patches_from_disk = load_patches_from_disk
 
         self.npatch = int(region_size // patch_size) ** 2
 
@@ -47,14 +54,35 @@ class MIL():
             else:
                 self.device = torch.device("cpu")
 
+        self.autocast_context = nullcontext()
+        if mixed_precision:
+            self.autocast_context = torch.autocast(device_type="cuda", dtype=torch.float16)
+
         self.feature_extractor = feature_extractor.to(self.device, non_blocking=True)
         self.feature_extractor.eval()
+
+        print(f"self.feature_extractor.get_transforms(), {self.feature_extractor.get_transforms()}")
+        self.transforms = torchvision.transforms.Compose(
+            [
+                torchvision.transforms.ToTensor(),
+                RegionUnfolding(patch_size),
+                self.feature_extractor.get_transforms(),
+            ]
+        )
 
         self.feature_aggregator = feature_aggregator.to(self.device, non_blocking=True)
         self.feature_aggregator.eval()
 
     def extract_slide_feature(self, wsi_fp):
-        dataset = PatchDatasetFromDisk(wsi_fp)
+        if self.load_patches_from_disk:
+            dataset = PatchDatasetFromDisk(wsi_fp, self.transforms)
+        else:
+            dataset = PatchDataset(
+                wsi_fp,
+                self.coordinates_dir,
+                backend=self.backend,
+                transforms=self.transforms,
+            )
         if self.distributed:
             sampler = torch.utils.data.DistributedSampler(dataset)
         else:
@@ -108,7 +136,7 @@ class MIL():
 
     def extract_patch_feature(self, patch):
         with torch.no_grad():
-            with autocast():
+            with self.autocast_context:
                 feature = self.feature_extractor(patch)
         return feature
 
@@ -128,7 +156,7 @@ class MIL():
 
     def predict(self, feature):
         with torch.no_grad():
-            with autocast():
+            with self.autocast_context:
                 logit = self.feature_aggregator(feature)
                 hazard = torch.sigmoid(logit)
                 surv = torch.cumprod(1 - hazard, dim=1)

@@ -9,9 +9,9 @@ from pathlib import Path
 from datetime import timedelta
 
 from source.dist_utils import is_main_process, is_dist_avail_and_initialized
-from source.utils import load_inputs, extract_coordinates, save_patches
+from source.utils import load_inputs, extract_coordinates, save_coordinates, save_patches
 from source.model import MIL
-from source.components import FM, HierarchicalViT
+from source.components import UNI, HierarchicalViT
 
 INPUT_PATH = Path("/input")
 OUTPUT_PATH = Path("/output")
@@ -21,10 +21,13 @@ RESOURCE_PATH = Path("/opt/app/resources")
 def get_args_parser(add_help: bool = True):
     parser = argparse.ArgumentParser("Local HViT", add_help=add_help)
     parser.add_argument("--spacing", default=0.5, type=float, help="pixel spacing in mpp")
-    parser.add_argument("--region_size", default=2048, type=int, help="context size")
+    parser.add_argument("--region-size", default=2048, type=int, help="context size")
     parser.add_argument("--fm", default="uni", type=str, help="name of FM to use as tile encoder")
-    parser.add_argument("--features_dim", default=1024, type=int, help="tile-level features dimension")
-    parser.add_argument("--nregion_max", default=None, type=int, help="maximum number of regions to keep")
+    parser.add_argument("--features-dim", default=1024, type=int, help="tile-level features dimension")
+    parser.add_argument("--nregion-max", default=None, type=int, help="maximum number of regions to keep")
+    parser.add_argument("--nbins", default=4, type=int, help="number of bins the aggregator was trained for")
+    parser.add_argument("--mixed-precision", default=False, type=bool, help="turn on mixed precision during inference")
+    parser.add_argument("--save-patches-to-disk", default=False, type=bool, help="save patches to disk as jpg")
     return parser
 
 
@@ -48,11 +51,20 @@ def run(args):
     region_size = args.region_size
     fm = args.fm
     features_dim = args.features_dim
-    nbins = 4
+    nbins = args.nbins
     nregion_max = args.nregion_max
     num_workers_data_loading = 4
     num_workers_preprocessing = 4
     batch_size = 4
+    mixed_precision = args.mixed_precision
+    save_patches_to_disk = args.save_patches_to_disk
+
+    # create output directories
+    coordinates_dir = Path("/tmp/coordinates")
+    coordinates_dir.mkdir(parents=True, exist_ok=True)
+    if save_patches_to_disk:
+        patch_dir = Path("/tmp/patches")
+        patch_dir.mkdir(parents=True, exist_ok=True)
 
     # preprocess input
     if is_main_process():
@@ -66,8 +78,10 @@ def run(args):
         ) as t:
             for wsi_fp, mask_fp in t:
                 tqdm.tqdm.write(f"Preprocessing {wsi_fp.stem}")
-                coord, tissue_pct, level, factor = extract_coordinates(wsi_fp, mask_fp, spacing, region_size, num_workers=num_workers_preprocessing)
-                save_patches(wsi_fp, coord, tissue_pct, level, region_size, factor, backend="asap", nregion_max=nregion_max, num_workers=num_workers_preprocessing)
+                coordinates, tissue_pct, level, resize_factor = extract_coordinates(wsi_fp, mask_fp, spacing, region_size, num_workers=num_workers_preprocessing)
+                save_coordinates(wsi_fp, coordinates, level, region_size, resize_factor, coordinates_dir)
+                if save_patches_to_disk:
+                    save_patches(wsi_fp, coordinates, tissue_pct, level, region_size, resize_factor, patch_dir, backend="asap", nregion_max=nregion_max, num_workers=num_workers_preprocessing)
         print("=+=" * 10)
 
     # wait for all processes to finish preprocessing
@@ -76,7 +90,8 @@ def run(args):
 
     # instantiate feature extractor
     feature_extractor_weights = Path(RESOURCE_PATH, f"feature_extractor.pt")
-    feature_extractor = FM(fm, feature_extractor_weights)
+    if fm == "uni":
+        feature_extractor = UNI(feature_extractor_weights, region_size)
     if is_main_process():
         print("=+=" * 10)
 
@@ -98,8 +113,11 @@ def run(args):
         spacing=spacing,
         region_size=region_size,
         features_dim=features_dim,
+        coordinates_dir=coordinates_dir,
         backend="asap",
         batch_size=batch_size,
+        mixed_precision=mixed_precision,
+        load_patches_from_disk=save_patches_to_disk,
         num_workers_data_loading=num_workers_data_loading,
         distributed=distributed,
     )
