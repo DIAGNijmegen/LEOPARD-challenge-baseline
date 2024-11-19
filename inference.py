@@ -11,7 +11,7 @@ from datetime import timedelta
 from source.dist_utils import is_main_process, is_dist_avail_and_initialized
 from source.utils import load_inputs, extract_coordinates, save_coordinates, save_patches
 from source.model import MIL
-from source.components import UNI, HierarchicalViT
+from source.components import UNI, Kaiko, HierarchicalViT
 
 INPUT_PATH = Path("/input")
 OUTPUT_PATH = Path("/output")
@@ -26,8 +26,8 @@ def get_args_parser(add_help: bool = True):
     parser.add_argument("--features-dim", default=1024, type=int, help="tile-level features dimension")
     parser.add_argument("--nregion-max", default=None, type=int, help="maximum number of regions to keep")
     parser.add_argument("--nbins", default=4, type=int, help="number of bins the aggregator was trained for")
-    parser.add_argument("--mixed-precision", default=False, type=bool, help="turn on mixed precision during inference")
-    parser.add_argument("--save-patches-to-disk", default=False, type=bool, help="save patches to disk as jpg")
+    parser.add_argument("--mixed-precision", action="store_true", help="turn on mixed precision during inference")
+    parser.add_argument("--save-patches-to-disk", action="store_true", help="save patches to disk as jpg")
     return parser
 
 
@@ -62,6 +62,7 @@ def run(args):
     # create output directories
     coordinates_dir = Path("/tmp/coordinates")
     coordinates_dir.mkdir(parents=True, exist_ok=True)
+    patch_dir = None
     if save_patches_to_disk:
         patch_dir = Path("/tmp/patches")
         patch_dir.mkdir(parents=True, exist_ok=True)
@@ -77,7 +78,6 @@ def run(args):
             leave=True,
         ) as t:
             for wsi_fp, mask_fp in t:
-                tqdm.tqdm.write(f"Preprocessing {wsi_fp.stem}")
                 coordinates, tissue_pct, level, resize_factor = extract_coordinates(wsi_fp, mask_fp, spacing, region_size, num_workers=num_workers_preprocessing)
                 save_coordinates(wsi_fp, coordinates, level, region_size, resize_factor, coordinates_dir)
                 if save_patches_to_disk:
@@ -91,7 +91,11 @@ def run(args):
     # instantiate feature extractor
     feature_extractor_weights = Path(RESOURCE_PATH, f"feature_extractor.pt")
     if fm == "uni":
-        feature_extractor = UNI(feature_extractor_weights, region_size)
+        feature_extractor = UNI(feature_extractor_weights)
+    elif fm == "kaiko":
+        feature_extractor = Kaiko(feature_extractor_weights)
+    else:
+        raise ValueError(f"Foundation model {fm} not recognized")
     if is_main_process():
         print("=+=" * 10)
 
@@ -114,6 +118,7 @@ def run(args):
         region_size=region_size,
         features_dim=features_dim,
         coordinates_dir=coordinates_dir,
+        patch_dir=patch_dir,
         backend="asap",
         batch_size=batch_size,
         mixed_precision=mixed_precision,

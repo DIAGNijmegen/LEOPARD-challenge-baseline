@@ -76,11 +76,10 @@ class CustomViT(nn.Module):
 
 
 class FeatureExtractor(nn.Module):
-    def __init__(self, pretrained_weights: str, region_size: int, patch_size: int = 256):
+    def __init__(self, pretrained_weights: str):
         super(FeatureExtractor, self).__init__()
         self.encoder = self.build_encoder()
         self.load_weights(pretrained_weights)
-        self.num_patches = (region_size // patch_size) ** 2
         for param in self.encoder.parameters():
             param.requires_grad = False
 
@@ -92,8 +91,8 @@ class FeatureExtractor(nn.Module):
             if verbose and is_main_process():
                 print("Loading pretrained weights for UNI")
             state_dict = torch.load(pretrained_weights, map_location="cpu")
-            state_dict, msg = update_state_dict(self.vit.state_dict(), state_dict)
-            self.vit.load_state_dict(state_dict, strict=True)
+            state_dict, msg = update_state_dict(self.encoder.state_dict(), state_dict)
+            self.encoder.load_state_dict(state_dict, strict=True)
             if verbose and is_main_process():
                 print(f"Pretrained weights found at {pretrained_weights}")
                 print(msg)
@@ -104,30 +103,52 @@ class FeatureExtractor(nn.Module):
             )
 
     def get_transforms(self):
-        data_config = resolve_data_config(
-            self.encoder.pretrained_cfg, model=self.encoder
-        )
-        transforms = create_transform(**data_config)
+        if self.config:
+            data_config = resolve_data_config(self.config)
+            transforms = create_transform(**data_config)
+        else:
+            transforms = None
         return transforms
 
     def forward(self, x):
+        # x = [B, num_patches, 3, 224, 224]
+        bs, num_patches = x.shape[0], x.shape[1]
+        x = x.reshape(bs*num_patches, *x.shape[2:])  # [B*num_patches, 3, 224, 224]
         patch_feature = self.encoder(x).detach()  # [B*num_patches, out_features_dim]
-        patch_feature = patch_feature.reshape(-1, self.num_patches, patch_feature.shape[-1]) # [B, num_patches, out_features_dim]
+        patch_feature = patch_feature.reshape(bs, num_patches, -1) # [B, num_patches, out_features_dim]
         return patch_feature
 
 
 class UNI(FeatureExtractor):
-    def __init__(self, pretrained_weights: str, region_size: int, patch_size: int = 256):
-        super(UNI, self).__init__(pretrained_weights, region_size, patch_size)
+    def __init__(self, pretrained_weights: str, patch_size: int = 256):
+        self.config = {
+            "model_name": "vit_large_patch16_224",
+            "patch_size": 16,
+            "img_size": 224,
+            "init_values": 1.0,
+            "num_classes": 0,
+            "dynamic_img_size": True,
+            "pretrained_cfg": {
+                "tag": "uni_mass100k",
+                "custom_load": True,
+                "crop_pct": 1,
+                "input_size": [3, 224, 224],
+                "fixed_input_size": False,
+                "interpolation": "bilinear",
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225],
+                "num_classes": 0,
+                "pool_size": None,
+                "first_conv": "patch_embed.proj",
+                "classifier": "head",
+            },
+        }
         if patch_size == 256:
-            self.encoder.pretrained_cfg["input_size"] = [3, 224, 224]
-            self.encoder.pretrained_cfg["crop_pct"] = 224 / 256  # ensure Resize is 256
-        self.encoder.pretrained_cfg[
-            "interpolation"
-        ] = "bicubic"
+            self.config["pretrained_cfg"]["crop_pct"] = 224 / 256  # ensure Resize is 256
+        super(UNI, self).__init__(pretrained_weights)
 
     def build_encoder(self):
-        return timm.create_model("vit_large_patch16_224", img_size=224, patch_size=16, init_values=1e-5, num_classes=0, dynamic_img_size=True)
+        return timm.create_model(**self.config)
 
 
 class Kaiko(FeatureExtractor):

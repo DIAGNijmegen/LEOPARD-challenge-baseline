@@ -9,7 +9,7 @@ from PIL import Image
 from pathlib import Path
 from typing import Dict, Optional
 
-from source.wsi_utils import find_common_spacings, isInContour_pct
+from source.wsi_utils import find_common_spacings, HasEnoughTissue
 
 import warnings
 
@@ -46,11 +46,9 @@ class WholeSlideImage(object):
 
         self.mask_path = mask_path
         if mask_path is not None:
-            tqdm.tqdm.write(f"Loading mask: {mask_path}")
             self.mask = wsd.WholeSlideImage(mask_path, backend=backend)
             self.seg_level = self.load_segmentation(downsample)
         else:
-            tqdm.tqdm.write("Segmenting tissue")
             self.seg_level = self.segment_tissue(downsample)
 
         self.contours_tissue = None
@@ -337,8 +335,8 @@ class WholeSlideImage(object):
 
         with tqdm.tqdm(
             contours,
-            desc="Processing tissue blobs",
-            unit=" contour",
+            desc=f"Processing {self.name}",
+            unit=" blob",
             total=len(contours),
             leave=False,
         ) as t:
@@ -376,15 +374,20 @@ class WholeSlideImage(object):
         drop_holes: bool = True,
         tissue_thresh: float = 0.01,
         use_padding: bool = True,
+        spacing_tol: float = 0.15,
         num_workers: int = 1,
     ):
 
-        patch_level, resize_factor = self.get_best_level_for_spacing(
+        patch_level, _ = self.get_best_level_for_spacing(
             spacing, ignore_warning=True
         )
 
         patch_spacing = self.get_level_spacing(patch_level)
         resize_factor = int(round(spacing / patch_spacing, 0))
+
+        if abs(resize_factor*patch_spacing/spacing - 1) > spacing_tol:
+            raise ValueError(f"ERROR: The natural spacing ({resize_factor*patch_spacing:.4f}) closest to the target spacing ({spacing:.4f}) was more than {spacing_tol*100}% apart.")
+
         patch_size_resized = patch_size * resize_factor
         step_size = int(patch_size_resized * (1.0 - overlap))
 
@@ -406,8 +409,8 @@ class WholeSlideImage(object):
             int(self.level_downsamples[patch_level][1]),
         )
         ref_patch_size = (
-            patch_size * patch_downsample[0],
-            patch_size * patch_downsample[1],
+            patch_size_resized * patch_downsample[0],
+            patch_size_resized * patch_downsample[1],
         )
 
         img_w, img_h = self.level_dimensions[0]
@@ -420,7 +423,7 @@ class WholeSlideImage(object):
 
         scale = self.level_downsamples[self.seg_level]
         cont = self.scaleContourDim([contour], (1.0 / scale[0], 1.0 / scale[1]))[0]
-        cont_check_fn = isInContour_pct(
+        cont_check_fn = HasEnoughTissue(
             contour=cont,
             contour_holes=contour_holes,
             tissue_mask=self.binary_mask,

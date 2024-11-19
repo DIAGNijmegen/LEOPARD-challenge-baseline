@@ -23,6 +23,7 @@ class MIL():
         region_size: int,
         features_dim: int,
         coordinates_dir: str,
+        patch_dir: str,
         patch_size: int = 256,
         batch_size: int = 1,
         mixed_precision: bool = False,
@@ -40,6 +41,9 @@ class MIL():
         self.features_dim = features_dim
         self.coordinates_dir = coordinates_dir
         self.load_patches_from_disk = load_patches_from_disk
+        if self.load_patches_from_disk:
+            assert patch_dir is not None, "patch_dir must be provided when load_patches_from_disk is True"
+        self.patch_dir = patch_dir
 
         self.npatch = int(region_size // patch_size) ** 2
 
@@ -75,11 +79,12 @@ class MIL():
 
     def extract_slide_feature(self, wsi_fp):
         if self.load_patches_from_disk:
-            dataset = PatchDatasetFromDisk(wsi_fp, self.transforms)
+            dataset = PatchDatasetFromDisk(wsi_fp, self.patch_dir, self.transforms)
         else:
             dataset = PatchDataset(
                 wsi_fp,
-                self.coordinates_dir,
+                self.region_size,
+                coordinates_dir=self.coordinates_dir,
                 backend=self.backend,
                 transforms=self.transforms,
             )

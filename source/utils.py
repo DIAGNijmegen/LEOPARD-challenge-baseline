@@ -65,8 +65,8 @@ def extract_coordinates(wsi_fp, mask_fp, spacing, patch_size, num_workers: int =
 def save_coordinates(wsi_fp, coordinates, patch_level, patch_size, resize_factor, save_dir: str):
     wsi_name = wsi_fp.stem
     output_path = Path(save_dir, f"{wsi_name}.npy")
-    x = list(coordinates[:, 0])  # defined w.r.t level 0
-    y = list(coordinates[:, 1])  # defined w.r.t level 0
+    x = [c[0] for c in coordinates] # defined w.r.t level 0
+    y = [c[1] for c in coordinates] # defined w.r.t level 0
     npatch = len(x)
     patch_size_resized = int(patch_size * resize_factor)
     data = []

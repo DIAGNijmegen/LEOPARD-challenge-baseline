@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import wholeslidedata as wsd
 
 from PIL import Image
@@ -13,6 +14,9 @@ class PatchDataset(torch.utils.data.Dataset):
         self.coord = self.load_coordinates(coordinates_dir)
         self.patch_size = patch_size
         self.transforms = transforms
+
+    def load_coordinates(self, coordinates_dir):
+        return np.load(Path(coordinates_dir, f"{self.name}.npy"))
 
     def __len__(self):
         return len(self.coord)
@@ -33,10 +37,10 @@ class PatchDataset(torch.utils.data.Dataset):
 
 
 class PatchDatasetFromDisk(torch.utils.data.Dataset):
-    def __init__(self, wsi_fp, transforms=None):
+    def __init__(self, wsi_fp, patch_dir, transforms=None):
         self.seed = 0
         self.name = wsi_fp.stem.replace(" ", "_")
-        self.patches = sorted([x for x in Path(f"/tmp/patches/{self.name}").glob("*.jpg")])
+        self.patches = sorted([x for x in Path(patch_dir, self.name).glob("*.jpg")])
         self.transforms = transforms
 
     def __len__(self):
