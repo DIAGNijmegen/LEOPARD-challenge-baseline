@@ -65,7 +65,6 @@ class MIL():
         self.feature_extractor = feature_extractor.to(self.device, non_blocking=True)
         self.feature_extractor.eval()
 
-        print(f"self.feature_extractor.get_transforms(), {self.feature_extractor.get_transforms()}")
         self.transforms = torchvision.transforms.Compose(
             [
                 torchvision.transforms.ToTensor(),
@@ -83,13 +82,12 @@ class MIL():
         else:
             dataset = PatchDataset(
                 wsi_fp,
-                self.region_size,
                 coordinates_dir=self.coordinates_dir,
                 backend=self.backend,
                 transforms=self.transforms,
             )
         if self.distributed:
-            sampler = torch.utils.data.DistributedSampler(dataset)
+            sampler = torch.utils.data.DistributedSampler(dataset, shuffle=False)
         else:
             sampler = None
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, sampler=sampler, num_workers=self.num_workers_data_loading, pin_memory=True)

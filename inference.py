@@ -55,7 +55,7 @@ def run(args):
     nregion_max = args.nregion_max
     num_workers_data_loading = 4
     num_workers_preprocessing = 4
-    batch_size = 4
+    batch_size = 1
     mixed_precision = args.mixed_precision
     save_patches_to_disk = args.save_patches_to_disk
 

@@ -7,12 +7,11 @@ from pathlib import Path
 
 
 class PatchDataset(torch.utils.data.Dataset):
-    def __init__(self, wsi_fp, patch_size, coordinates_dir, backend, transforms=None):
-        self.seed = 0
+    def __init__(self, wsi_fp, coordinates_dir, backend, transforms=None):
+        self.path = wsi_fp
         self.name = wsi_fp.stem.replace(" ", "_")
-        self.wsi = wsd.WholeSlideImage(wsi_fp, backend=backend)
+        self.backend = backend
         self.coord = self.load_coordinates(coordinates_dir)
-        self.patch_size = patch_size
         self.transforms = transforms
 
     def load_coordinates(self, coordinates_dir):
@@ -22,13 +21,15 @@ class PatchDataset(torch.utils.data.Dataset):
         return len(self.coord)
 
     def __getitem__(self, idx):
+        wsi = wsd.WholeSlideImage(self.path, backend=self.backend)
         x, y, patch_size_resized, patch_level, resize_factor = self.coord[idx]
-        patch_spacing = self.wsi.spacings[patch_level]
-        patch = self.wsi.get_patch(x, y, patch_size_resized, patch_size_resized, spacing=patch_spacing, center=False)
+        patch_spacing = wsi.spacings[patch_level]
+        patch = wsi.get_patch(x, y, patch_size_resized, patch_size_resized, spacing=patch_spacing, center=False)
         pil_patch = Image.fromarray(patch).convert("RGB")
         if resize_factor != 1:
-            assert patch_size_resized % self.patch_size == 0, f"width ({patch_size_resized}) is not divisible by region_size ({self.patch_size})"
-            pil_patch = pil_patch.resize((self.patch_size, self.patch_size))
+            patch_size = int(patch_size_resized / resize_factor)
+            assert patch_size_resized % patch_size == 0, f"width ({patch_size_resized}) is not divisible by region_size ({patch_size})"
+            pil_patch = pil_patch.resize((patch_size, patch_size))
         if self.transforms is not None:
             img = self.transforms(pil_patch)
         else:
