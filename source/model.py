@@ -38,6 +38,10 @@ class MIL():
 
         self.features_dir = features_dir
 
+        self.autocast_context = nullcontext()
+        if mixed_precision:
+            self.autocast_context = torch.autocast(device_type="cuda", dtype=torch.float16)
+
         self.feature_aggregator = feature_aggregator.to(self.device, non_blocking=True)
         self.feature_aggregator.eval()
 
@@ -60,11 +64,8 @@ class MIL():
         return df
 
     def predict(self, feature):
-        autocast_context = nullcontext()
-        if self.mixed_precision:
-            autocast_context = torch.autocast(device_type="cuda", dtype=torch.float16)
         with torch.no_grad():
-            with autocast_context:
+            with self.autocast_context:
                 logit = self.feature_aggregator(feature)
                 hazard = torch.sigmoid(logit)
                 surv = torch.cumprod(1 - hazard, dim=1)

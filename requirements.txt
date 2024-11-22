@@ -1,14 +1,10 @@
-h5py
 wandb
-numpy
+numpy==1.23.1
 pandas
 pillow
-gdown
-plotly
 einops
-matplotlib
 scikit-learn
 scikit-survival
 tqdm
-torch
-torchvision==0.13.0
+torch==1.13.1
+torchvision==0.14.1

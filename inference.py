@@ -19,7 +19,8 @@ def get_args_parser(add_help: bool = True):
     parser = argparse.ArgumentParser("Local HViT", add_help=add_help)
     parser.add_argument("--region-size", default=2048, type=int, help="context size")
     parser.add_argument("--features-dim", default=1024, type=int, help="tile-level features dimension")
-    parser.add_argument("--mixed-precision", default=False, type=bool, help="enable mixed precision")
+    parser.add_argument("--nbins", default=4, type=int, help="number of bins the aggregator was trained for")
+    parser.add_argument("--mixed-precision", action="store_true", help="turn on mixed precision during inference")
     parser.add_argument("--restrict", default=None, type=str, help="path to a .txt file with ids of cases we want to restrict inference on")
     return parser
 
@@ -43,7 +44,7 @@ def run(args):
     region_size = args.region_size
     features_dim = args.features_dim
     mixed_precision = args.mixed_precision
-    nbins = 4
+    nbins = args.nbins
 
     # (optionally) restrict inference
     restrict_ids = None

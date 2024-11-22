@@ -1,12 +1,8 @@
-h5py
 wandb
 numpy==%NUMPY_VERSION%
 pandas
 pillow
-gdown
-plotly
 einops
-matplotlib
 scikit-learn
 scikit-survival
 tqdm
