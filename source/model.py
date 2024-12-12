@@ -149,7 +149,7 @@ class MIL():
         Check https://grand-challenge.org/algorithms/interfaces/
         """
         df = pd.DataFrame({
-            "slide_id": [fp.stem for fp in case_list],
+            "case_id": [fp.stem for fp in case_list],
             "overall_survival_years": predictions,
             "nregion": nregion,
             "processing_time": processing_time,
@@ -198,7 +198,5 @@ class MIL():
         return predictions
 
     def postprocess(self, risk):
-        # risk_shifted = risk + abs(min(risk))
-        # overall_survival_years = risk_shifted * self.risk_scaling_factor
         overall_survival_years = -risk
         return overall_survival_years
