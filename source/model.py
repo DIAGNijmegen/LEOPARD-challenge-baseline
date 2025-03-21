@@ -2,10 +2,12 @@ import time
 import tqdm
 import torch
 import torchvision
+import numpy as np
 import pandas as pd
 import torch.nn as nn
 import torch.distributed as dist
 
+from typing import Union, List
 from contextlib import nullcontext
 
 from source.dataset import PatchDataset, PatchDatasetFromDisk
@@ -18,7 +20,7 @@ class MIL():
     def __init__(
         self,
         feature_extractor: nn.Module,
-        feature_aggregator: nn.Module,
+        feature_aggregator: Union[List[nn.Module], nn.Module],
         spacing: float,
         region_size: int,
         features_dim: int,
@@ -73,8 +75,13 @@ class MIL():
             ]
         )
 
-        self.feature_aggregator = feature_aggregator.to(self.device, non_blocking=True)
-        self.feature_aggregator.eval()
+        if not isinstance(feature_aggregator, list):
+            feature_aggregator = [feature_aggregator]
+        self.feature_aggregator = []
+        for model in feature_aggregator:
+            model.to(self.device, non_blocking=True)
+            model.eval()
+            self.feature_aggregator.append(model)
 
     def extract_slide_feature(self, wsi_fp):
         if self.load_patches_from_disk:
@@ -158,13 +165,16 @@ class MIL():
         return df
 
     def predict(self, feature):
-        with torch.no_grad():
-            with self.autocast_context:
-                logit = self.feature_aggregator(feature)
-                hazard = torch.sigmoid(logit)
-                surv = torch.cumprod(1 - hazard, dim=1)
-                risk = -torch.sum(surv, dim=1).detach().item()
-        return risk
+        predictions = []
+        for i, model in enumerate(self.feature_aggregator):
+            with torch.no_grad():
+                with self.autocast_context:
+                    logit = model(feature)
+                    hazard = torch.sigmoid(logit)
+                    surv = torch.cumprod(1 - hazard, dim=1)
+                    risk = -torch.sum(surv, dim=1).detach().item()
+                    predictions.append(risk)
+        return predictions
 
     def process(self):
         """
@@ -198,5 +208,8 @@ class MIL():
         return predictions
 
     def postprocess(self, risk):
-        overall_survival_years = -risk
+        if len(risk) == 1:
+            overall_survival_years = -risk[0]
+        else:
+            overall_survival_years = -np.mean(risk)
         return overall_survival_years

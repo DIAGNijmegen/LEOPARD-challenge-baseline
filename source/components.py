@@ -5,79 +5,23 @@ import torch.nn.functional as F
 
 from pathlib import Path
 from typing import Optional
-from einops import rearrange
+from torchvision import transforms
+
 from timm.data import resolve_data_config
 from timm.data.transforms_factory import create_transform
 
-from source.vision_transformer import vit_small, vit4k_xs
+import source.vision_transformer as vits
+
+from source.vision_transformer import vit4k_xs
 from source.model_utils import Attn_Net_Gated, update_state_dict
 from source.dist_utils import is_main_process
-
-
-class CustomViT(nn.Module):
-    def __init__(
-        self,
-        pretrained_weights: str,
-        patch_size: int = 256,
-        mini_patch_size: int = 16,
-        embed_dim: int = 384,
-        mask_attn: bool = False,
-        num_register_tokens: int = 0,
-        verbose: bool = True,
-    ):
-        super(CustomViT, self).__init__()
-
-        self.ps = patch_size
-
-        self.vit = vit_small(
-            img_size=patch_size,
-            patch_size=mini_patch_size,
-            embed_dim=embed_dim,
-            mask_attn=mask_attn,
-            num_register_tokens=num_register_tokens,
-        )
-
-        if Path(pretrained_weights).is_file():
-            if verbose and is_main_process():
-                print("Loading pretrained weights for ViT-S")
-            state_dict = torch.load(pretrained_weights, map_location="cpu")
-            state_dict, msg = update_state_dict(self.vit.state_dict(), state_dict)
-            self.vit.load_state_dict(state_dict, strict=False)
-            if verbose and is_main_process():
-                print(f"Pretrained weights found at {pretrained_weights}")
-                print(msg)
-
-        elif verbose and is_main_process():
-            print(
-                f"{pretrained_weights} doesnt exist ; please provide path to existing file"
-            )
-
-    def forward(self, x, pct: Optional[torch.Tensor] = None, pct_thresh: float = 0.0):
-        mask_mini_patch = None
-        if pct is not None:
-            mask_mini_patch = (pct > pct_thresh).int()  # [num_patches, nminipatch**2]
-            # add the [CLS] token to the mask
-            cls_token = mask_mini_patch.new_ones((mask_mini_patch.size(dim=0), 1))
-            mask_mini_patch = torch.cat(
-                (cls_token, mask_mini_patch), dim=1
-            )  # [num_patches, num_mini_patches+1]
-        # x = [B, 3, region_size, region_size]
-        num_patches = (x.shape[2] // self.ps) ** 2
-        x = x.unfold(2, self.ps, self.ps).unfold(
-            3, self.ps, self.ps
-        )  # [B, 3, npatch, region_size, ps] -> [B, 3, npatch, npatch, ps, ps]
-        x = rearrange(x, "b c p1 p2 w h -> (b p1 p2) c w h")  # [B*num_patches, 3, ps, ps]
-
-        patch_feature = (
-            self.vit(x, mask=mask_mini_patch).detach()
-        )  # [B*num_patches, 384]
-        patch_feature = patch_feature.reshape(-1, num_patches, patch_feature.shape[-1])
-        return patch_feature
+from source.augmentations import make_normalize_transform, MaybeToTensor
 
 
 class FeatureExtractor(nn.Module):
-    def __init__(self, pretrained_weights: str):
+    def __init__(self, pretrained_weights: str, ckpt_key: Optional[str] = None):
         super(FeatureExtractor, self).__init__()
+        self.ckpt_key = ckpt_key
         self.encoder = self.build_encoder()
         self.load_weights(pretrained_weights)
         for param in self.encoder.parameters():
@@ -89,13 +33,20 @@ class FeatureExtractor(nn.Module):
     def load_weights(self, pretrained_weights, verbose: bool = True):
         if Path(pretrained_weights).is_file():
             if verbose and is_main_process():
-                print("Loading pretrained weights for UNI")
+                print(f"Loading encoder weights from: {pretrained_weights}")
             state_dict = torch.load(pretrained_weights, map_location="cpu")
+            if self.ckpt_key:
+                state_dict = state_dict[self.ckpt_key]
+            nn.modules.utils.consume_prefix_in_state_dict_if_present(
+                state_dict, prefix="module."
+            )
+            nn.modules.utils.consume_prefix_in_state_dict_if_present(
+                state_dict, prefix="backbone."
+            )
             state_dict, msg = update_state_dict(self.encoder.state_dict(), state_dict)
-            self.encoder.load_state_dict(state_dict, strict=True)
             if verbose and is_main_process():
-                print(f"Pretrained weights found at {pretrained_weights}")
                 print(msg)
+            self.encoder.load_state_dict(state_dict, strict=True)
 
         elif verbose and is_main_process():
             print(
@@ -117,6 +68,48 @@ class FeatureExtractor(nn.Module):
         patch_feature = self.encoder(x).detach()  # [B*num_patches, out_features_dim]
         patch_feature = patch_feature.reshape(bs, num_patches, -1) # [B, num_patches, out_features_dim]
         return patch_feature
+
+
+class DINOViT(FeatureExtractor):
+    def __init__(
+        self,
+        arch: str,
+        pretrained_weights: str,
+        input_size: int = 256,
+        patch_size: int = 14,
+        ckpt_key: str = "teacher",
+    ):
+        self.arch = arch
+        self.pretrained_weights = pretrained_weights
+        self.input_size = input_size
+        self.patch_size = patch_size
+        arch2dim = {"vit_large": 1024, "vit_base": 768, "vit_small": 384}
+        super(DINOViT, self).__init__(pretrained_weights, ckpt_key)
+        self.features_dim = arch2dim[arch]
+
+    def build_encoder(self):
+        encoder = vits.__dict__[self.arch](
+            img_size=self.input_size, patch_size=self.patch_size
+        )
+        return encoder
+
+    def get_transforms(self):
+        if self.input_size > 224:
+            transform = transforms.Compose(
+                [
+                    MaybeToTensor(),
+                    transforms.CenterCrop(224),
+                    make_normalize_transform(),
+                ]
+            )
+        else:
+            transforms.Compose(
+                [
+                    MaybeToTensor(),
+                    make_normalize_transform(),
+                ]
+            )
+        return transform
 
 
 class UNI(FeatureExtractor):
@@ -146,6 +139,7 @@ class UNI(FeatureExtractor):
         if patch_size == 256:
             self.config["pretrained_cfg"]["crop_pct"] = 224 / 256  # ensure Resize is 256
         super(UNI, self).__init__(pretrained_weights)
+        self.features_dim = 1024
 
     def build_encoder(self):
         return timm.create_model(**self.config)
@@ -154,6 +148,7 @@ class UNI(FeatureExtractor):
 class Kaiko(FeatureExtractor):
     def __init__(self, pretrained_weights: str, region_size: int, patch_size: int = 256):
         super(Kaiko, self).__init__(pretrained_weights, region_size, patch_size)
+        self.features_dim = 768
 
     def build_encoder(self):
         pretrained_cfg = {

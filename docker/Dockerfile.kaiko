@@ -111,7 +111,7 @@ COPY --chown=user:user source /opt/app/source
 COPY --chown=user:user inference.py /opt/app/
 
 # copy resources
-COPY --chown=user:user resources/feature_extractor_kaiko.pth /opt/app/resources/feature_extractor.pt
+COPY --chown=user:user resources/encoders/kaiko.pt /opt/app/resources/feature_extractor.pt
 COPY --chown=user:user resources/Local-HViT_2048_kaiko_fold_4.pt /opt/app/resources/feature_aggregator.pt
 
 # overwrite vision_transformer.py

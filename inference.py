@@ -11,7 +11,7 @@ from datetime import timedelta
 from source.dist_utils import is_main_process, is_dist_avail_and_initialized
 from source.utils import load_inputs, extract_coordinates, save_coordinates, save_patches
 from source.model import MIL
-from source.components import UNI, Kaiko, HierarchicalViT
+from source.components import DINOViT, UNI, Kaiko, HierarchicalViT
 
 INPUT_PATH = Path("/input")
 OUTPUT_PATH = Path("/output")
@@ -23,7 +23,6 @@ def get_args_parser(add_help: bool = True):
     parser.add_argument("--spacing", default=0.5, type=float, help="pixel spacing in mpp")
     parser.add_argument("--region-size", default=2048, type=int, help="context size")
     parser.add_argument("--fm", default="uni", type=str, help="name of FM to use as tile encoder")
-    parser.add_argument("--features-dim", default=1024, type=int, help="tile-level features dimension")
     parser.add_argument("--nregion-max", default=None, type=int, help="maximum number of regions to keep")
     parser.add_argument("--nbins", default=4, type=int, help="number of bins the aggregator was trained for")
     parser.add_argument("--mixed-precision", action="store_true", help="turn on mixed precision during inference")
@@ -50,7 +49,6 @@ def run(args):
     spacing = args.spacing
     region_size = args.region_size
     fm = args.fm
-    features_dim = args.features_dim
     nbins = args.nbins
     nregion_max = args.nregion_max
     num_workers_data_loading = 4
@@ -89,31 +87,41 @@ def run(args):
         dist.barrier()
 
     # instantiate feature extractor
-    feature_extractor_weights = Path(RESOURCE_PATH, f"feature_extractor.pt")
+    feature_extractor_weights = RESOURCE_PATH / "feature_extractor.pt"
     if fm == "uni":
         feature_extractor = UNI(feature_extractor_weights)
     elif fm == "kaiko":
         feature_extractor = Kaiko(feature_extractor_weights)
+    elif fm == "custom":
+        feature_extractor = DINOViT(
+            arch="vit_small",
+            pretrained_weights=feature_extractor_weights,
+        )
     else:
         raise ValueError(f"Foundation model {fm} not recognized")
+    features_dim = feature_extractor.features_dim
     if is_main_process():
         print("=+=" * 10)
 
-    # instantiate feature aggregator
-    feature_aggregator_weights = Path(RESOURCE_PATH, f"feature_aggregator.pt")
-    feature_aggregator = HierarchicalViT(
-        feature_aggregator_weights,
-        num_classes=nbins,
-        region_size=region_size,
-        input_embed_dim=features_dim,
-    )
+    # instantiate feature aggregator(s)
+    feature_aggregators = []
+    feature_aggregator_dir = RESOURCE_PATH / "aggregators"
+    feature_aggregator_weights = [x for x in feature_aggregator_dir.glob("*.pt")]
+    for weight_file in feature_aggregator_weights:
+        agg = HierarchicalViT(
+            weight_file,
+            num_classes=nbins,
+            region_size=region_size,
+            input_embed_dim=features_dim,
+        )
+        feature_aggregators.append(agg)
     if is_main_process():
         print("=+=" * 10)
 
     # instantiate the algorithm
     algorithm = MIL(
         feature_extractor,
-        feature_aggregator,
+        feature_aggregators,
         spacing=spacing,
         region_size=region_size,
         features_dim=features_dim,
