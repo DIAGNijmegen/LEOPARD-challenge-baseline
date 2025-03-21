@@ -1,4 +1,3 @@
-timm
 wandb
 numpy==1.23.1
 pandas
@@ -7,6 +6,5 @@ einops
 scikit-learn
 scikit-survival
 tqdm
-wholeslidedata
 torch==1.13.1
 torchvision==0.14.1
