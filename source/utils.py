@@ -29,7 +29,9 @@ def keep_top_regions(coordinates, tissue_pct, nregion_max: Optional[int] = None)
     indexed_combined = list(enumerate(zip(coordinates, tissue_pct)))
     # sort by tissue percentage in descending order to find the top nregion_max values, but keep original indices
     if nregion_max and len(indexed_combined) > nregion_max:
-        top_indices = sorted(indexed_combined, key=lambda x: x[1][1], reverse=True)[:nregion_max]
+        top_indices = sorted(indexed_combined, key=lambda x: x[1][1], reverse=True)[
+            :nregion_max
+        ]
     else:
         top_indices = sorted(indexed_combined, key=lambda x: x[1][1], reverse=True)
     # get the original indices of the top nregion_max percentages
@@ -43,8 +45,12 @@ def load_inputs():
     """
     Read from /input/
     """
-    case_list = sorted([fp for fp in Path("/input/images/prostatectomy-wsi").glob("*.tif")])
-    mask_list = sorted([fp for fp in Path("/input/images/prostatectomy-tissue-mask").glob("*.tif")])
+    case_list = sorted(
+        [fp for fp in Path("/input/images/prostatectomy-wsi").glob("*.tif")]
+    )
+    mask_list = sorted(
+        [fp for fp in Path("/input/images/prostatectomy-tissue-mask").glob("*.tif")]
+    )
     # case_dict = {fp.stem: fp for fp in case_list}
     # mask_dict = {fp.stem.replace("_tissue", ""): fp for fp in mask_list}
     # common_keys = case_dict.keys() & mask_dict.keys()
@@ -57,16 +63,22 @@ def load_inputs():
 
 def extract_coordinates(wsi_fp, mask_fp, spacing, patch_size, num_workers: int = 1):
     wsi = WholeSlideImage(wsi_fp, mask_fp)
-    coordinates, tissue_percentages, patch_level, resize_factor = wsi.get_patch_coordinates(spacing, patch_size, num_workers=num_workers)
-    sorted_coordinates, sorted_tissue_percentages = sort_coords_with_tissue(coordinates, tissue_percentages)
+    coordinates, tissue_percentages, patch_level, resize_factor = (
+        wsi.get_patch_coordinates(spacing, patch_size, num_workers=num_workers)
+    )
+    sorted_coordinates, sorted_tissue_percentages = sort_coords_with_tissue(
+        coordinates, tissue_percentages
+    )
     return sorted_coordinates, sorted_tissue_percentages, patch_level, resize_factor
 
 
-def save_coordinates(wsi_fp, coordinates, patch_level, patch_size, resize_factor, save_dir: str):
+def save_coordinates(
+    wsi_fp, coordinates, patch_level, patch_size, resize_factor, save_dir: str
+):
     wsi_name = wsi_fp.stem
     output_path = Path(save_dir, f"{wsi_name}.npy")
-    x = [c[0] for c in coordinates] # defined w.r.t level 0
-    y = [c[1] for c in coordinates] # defined w.r.t level 0
+    x = [c[0] for c in coordinates]  # defined w.r.t level 0
+    y = [c[1] for c in coordinates]  # defined w.r.t level 0
     npatch = len(x)
     patch_size_resized = int(patch_size * resize_factor)
     data = []
@@ -77,14 +89,26 @@ def save_coordinates(wsi_fp, coordinates, patch_level, patch_size, resize_factor
     return output_path
 
 
-def save_patch(coord, wsi_fp, spacing, patch_size, resize_factor, patch_dir: str, backend: str = "asap"):
+def save_patch(
+    coord,
+    wsi_fp,
+    spacing,
+    patch_size,
+    resize_factor,
+    patch_dir: str,
+    backend: str = "asap",
+):
     patch_size_resized = int(patch_size * resize_factor)
     x, y = coord
     wsi = wsd.WholeSlideImage(wsi_fp, backend=backend)
-    patch = wsi.get_patch(x, y, patch_size_resized, patch_size_resized, spacing=spacing, center=False)
+    patch = wsi.get_patch(
+        x, y, patch_size_resized, patch_size_resized, spacing=spacing, center=False
+    )
     pil_patch = Image.fromarray(patch).convert("RGB")
     if resize_factor != 1:
-        assert patch_size_resized % patch_size == 0, f"width ({patch_size_resized}) is not divisible by patch_size ({patch_size})"
+        assert (
+            patch_size_resized % patch_size == 0
+        ), f"width ({patch_size_resized}) is not divisible by patch_size ({patch_size})"
         pil_patch = pil_patch.resize((patch_size, patch_size))
     patch_fp = Path(patch_dir, f"{int(x)}_{int(y)}.jpg")
     pil_patch.save(patch_fp)
@@ -96,7 +120,18 @@ def save_patch_mp(args):
     return save_patch(coord, wsi_fp, spacing, patch_size, resize_factor, patch_dir)
 
 
-def save_patches(wsi_fp, coord, tissue_pct, patch_level, patch_size, resize_factor, patch_root_dir: str, backend: str = "asap", nregion_max: Optional[int] = None, num_workers: int = 1):
+def save_patches(
+    wsi_fp,
+    coord,
+    tissue_pct,
+    patch_level,
+    patch_size,
+    resize_factor,
+    patch_root_dir: str,
+    backend: str = "asap",
+    nregion_max: Optional[int] = None,
+    num_workers: int = 1,
+):
     wsi_name = wsi_fp.stem
     wsi = wsd.WholeSlideImage(wsi_fp, backend=backend)
     patch_spacing = wsi.spacings[patch_level]
@@ -105,13 +140,13 @@ def save_patches(wsi_fp, coord, tissue_pct, patch_level, patch_size, resize_fact
     # filter out patches with low tissue percentage
     coord = keep_top_regions(coord, tissue_pct, nregion_max)
     if nregion_max:
-        assert len(coord) <= nregion_max, f"Number of regions ({len(coord)}) is greater than maximum allowed ({nregion_max})"
+        assert (
+            len(coord) <= nregion_max
+        ), f"Number of regions ({len(coord)}) is greater than maximum allowed ({nregion_max})"
     if num_workers > 1:
         num_workers = min(mp.cpu_count(), num_workers)
         if "SLURM_JOB_CPUS_PER_NODE" in os.environ:
-            num_workers = min(
-                num_workers, int(os.environ["SLURM_JOB_CPUS_PER_NODE"])
-            )
+            num_workers = min(num_workers, int(os.environ["SLURM_JOB_CPUS_PER_NODE"]))
         iterable = [
             (c, wsi_fp, patch_spacing, patch_size, resize_factor, patch_dir)
             for c in coord
@@ -133,4 +168,12 @@ def save_patches(wsi_fp, coord, tissue_pct, patch_level, patch_size, resize_fact
             leave=False,
         ) as t:
             for c in t:
-                save_patch(c, wsi, wsi_name, patch_spacing, patch_size, resize_factor, patch_dir)
+                save_patch(
+                    c,
+                    wsi,
+                    wsi_name,
+                    patch_spacing,
+                    patch_size,
+                    resize_factor,
+                    patch_dir,
+                )

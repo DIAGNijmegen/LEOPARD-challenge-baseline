@@ -148,7 +148,7 @@ class MaskedAttention(Attention):
         qk_scale=None,
         attn_drop: float = 0.0,
         proj_drop: float = 0.0,
-        num_register_tokens: int = 0
+        num_register_tokens: int = 0,
     ):
         super().__init__(
             dim,
@@ -313,7 +313,9 @@ class VisionTransformer(nn.Module):
 
         assert num_register_tokens >= 0
         self.register_tokens = (
-            nn.Parameter(torch.zeros(1, num_register_tokens, embed_dim)) if num_register_tokens else None
+            nn.Parameter(torch.zeros(1, num_register_tokens, embed_dim))
+            if num_register_tokens
+            else None
         )
 
         dpr = [
@@ -558,7 +560,9 @@ class VisionTransformer4K(nn.Module):
 
         assert num_register_tokens >= 0
         self.register_tokens = (
-            nn.Parameter(torch.zeros(1, num_register_tokens, self.embed_dim)) if num_register_tokens else None
+            nn.Parameter(torch.zeros(1, num_register_tokens, self.embed_dim))
+            if num_register_tokens
+            else None
         )
 
         dpr = [

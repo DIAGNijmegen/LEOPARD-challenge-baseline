@@ -16,7 +16,7 @@ from source.utils import load_inputs
 from source.dist_utils import is_main_process
 
 
-class MIL():
+class MIL:
     def __init__(
         self,
         feature_extractor: nn.Module,
@@ -44,7 +44,9 @@ class MIL():
         self.coordinates_dir = coordinates_dir
         self.load_patches_from_disk = load_patches_from_disk
         if self.load_patches_from_disk:
-            assert patch_dir is not None, "patch_dir must be provided when load_patches_from_disk is True"
+            assert (
+                patch_dir is not None
+            ), "patch_dir must be provided when load_patches_from_disk is True"
         self.patch_dir = patch_dir
 
         self.npatch = int(region_size // patch_size) ** 2
@@ -62,7 +64,9 @@ class MIL():
 
         self.autocast_context = nullcontext()
         if mixed_precision:
-            self.autocast_context = torch.autocast(device_type="cuda", dtype=torch.float16)
+            self.autocast_context = torch.autocast(
+                device_type="cuda", dtype=torch.float16
+            )
 
         self.feature_extractor = feature_extractor.to(self.device, non_blocking=True)
         self.feature_extractor.eval()
@@ -97,8 +101,16 @@ class MIL():
             sampler = torch.utils.data.DistributedSampler(dataset, shuffle=False)
         else:
             sampler = None
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, sampler=sampler, num_workers=self.num_workers_data_loading, pin_memory=True)
-        patch_feature = torch.empty((0, self.npatch, self.features_dim), device=self.device)
+        dataloader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            sampler=sampler,
+            num_workers=self.num_workers_data_loading,
+            pin_memory=True,
+        )
+        patch_feature = torch.empty(
+            (0, self.npatch, self.features_dim), device=self.device
+        )
         patch_indices = torch.empty((0,), dtype=torch.long, device=self.device)
         with torch.no_grad():
             with tqdm.tqdm(
@@ -107,14 +119,16 @@ class MIL():
                 unit=" region",
                 unit_scale=self.batch_size,
                 leave=False,
-                position=1+self.device_id,
+                position=1 + self.device_id,
             ) as t:
                 for batch in t:
                     idx, img = batch
                     img = img.to(self.device, non_blocking=True)
                     features = self.extract_patch_feature(img)
                     patch_feature = torch.cat((patch_feature, features), dim=0)
-                    patch_indices = torch.cat((patch_indices, idx.to(self.device, non_blocking=True)), dim=0)
+                    patch_indices = torch.cat(
+                        (patch_indices, idx.to(self.device, non_blocking=True)), dim=0
+                    )
                     torch.cuda.empty_cache()
 
         if self.distributed:
@@ -122,8 +136,14 @@ class MIL():
 
         if self.distributed:
             # gather features and indices from all GPUs
-            gathered_feature = [torch.zeros_like(patch_feature, device=self.device) for _ in range(dist.get_world_size())]
-            gathered_indices = [torch.zeros_like(patch_indices, device=self.device) for _ in range(dist.get_world_size())]
+            gathered_feature = [
+                torch.zeros_like(patch_feature, device=self.device)
+                for _ in range(dist.get_world_size())
+            ]
+            gathered_indices = [
+                torch.zeros_like(patch_indices, device=self.device)
+                for _ in range(dist.get_world_size())
+            ]
             dist.all_gather(gathered_feature, patch_feature)
             dist.all_gather(gathered_indices, patch_indices)
             if is_main_process():
@@ -133,7 +153,10 @@ class MIL():
                 # remove duplicates
                 unique_indices = torch.unique(patch_indices)
                 # create a final tensor to store the features in the correct order
-                slide_feature_ordered = torch.zeros((len(unique_indices), self.npatch, self.features_dim), device=self.device)
+                slide_feature_ordered = torch.zeros(
+                    (len(unique_indices), self.npatch, self.features_dim),
+                    device=self.device,
+                )
                 # insert each feature into its correct position based on patch_indices
                 slide_feature_ordered[unique_indices] = slide_feature[unique_indices]
             else:
@@ -155,12 +178,14 @@ class MIL():
         Write to /output/
         Check https://grand-challenge.org/algorithms/interfaces/
         """
-        df = pd.DataFrame({
-            "case_id": [fp.stem for fp in case_list],
-            "overall_survival_years": predictions,
-            "nregion": nregion,
-            "processing_time": processing_time,
-        })
+        df = pd.DataFrame(
+            {
+                "case_id": [fp.stem for fp in case_list],
+                "overall_survival_years": predictions,
+                "nregion": nregion,
+                "processing_time": processing_time,
+            }
+        )
         df.to_csv("/output/predictions.csv", index=False)
         return df
 

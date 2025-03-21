@@ -9,7 +9,12 @@ from pathlib import Path
 from datetime import timedelta
 
 from source.dist_utils import is_main_process, is_dist_avail_and_initialized
-from source.utils import load_inputs, extract_coordinates, save_coordinates, save_patches
+from source.utils import (
+    load_inputs,
+    extract_coordinates,
+    save_coordinates,
+    save_patches,
+)
 from source.model import MIL
 from source.components import DINOViT, UNI, Kaiko, HierarchicalViT
 
@@ -20,13 +25,35 @@ RESOURCE_PATH = Path("/opt/app/resources")
 
 def get_args_parser(add_help: bool = True):
     parser = argparse.ArgumentParser("Local HViT", add_help=add_help)
-    parser.add_argument("--spacing", default=0.5, type=float, help="pixel spacing in mpp")
+    parser.add_argument(
+        "--spacing", default=0.5, type=float, help="pixel spacing in mpp"
+    )
     parser.add_argument("--region-size", default=2048, type=int, help="context size")
-    parser.add_argument("--fm", default="uni", type=str, help="name of FM to use as tile encoder")
-    parser.add_argument("--nregion-max", default=None, type=int, help="maximum number of regions to keep")
-    parser.add_argument("--nbins", default=4, type=int, help="number of bins the aggregator was trained for")
-    parser.add_argument("--mixed-precision", action="store_true", help="turn on mixed precision during inference")
-    parser.add_argument("--save-patches-to-disk", action="store_true", help="save patches to disk as jpg")
+    parser.add_argument(
+        "--fm", default="uni", type=str, help="name of FM to use as tile encoder"
+    )
+    parser.add_argument(
+        "--nregion-max",
+        default=None,
+        type=int,
+        help="maximum number of regions to keep",
+    )
+    parser.add_argument(
+        "--nbins",
+        default=4,
+        type=int,
+        help="number of bins the aggregator was trained for",
+    )
+    parser.add_argument(
+        "--mixed-precision",
+        action="store_true",
+        help="turn on mixed precision during inference",
+    )
+    parser.add_argument(
+        "--save-patches-to-disk",
+        action="store_true",
+        help="save patches to disk as jpg",
+    )
     return parser
 
 
@@ -76,10 +103,34 @@ def run(args):
             leave=True,
         ) as t:
             for wsi_fp, mask_fp in t:
-                coordinates, tissue_pct, level, resize_factor = extract_coordinates(wsi_fp, mask_fp, spacing, region_size, num_workers=num_workers_preprocessing)
-                save_coordinates(wsi_fp, coordinates, level, region_size, resize_factor, coordinates_dir)
+                coordinates, tissue_pct, level, resize_factor = extract_coordinates(
+                    wsi_fp,
+                    mask_fp,
+                    spacing,
+                    region_size,
+                    num_workers=num_workers_preprocessing,
+                )
+                save_coordinates(
+                    wsi_fp,
+                    coordinates,
+                    level,
+                    region_size,
+                    resize_factor,
+                    coordinates_dir,
+                )
                 if save_patches_to_disk:
-                    save_patches(wsi_fp, coordinates, tissue_pct, level, region_size, resize_factor, patch_dir, backend="asap", nregion_max=nregion_max, num_workers=num_workers_preprocessing)
+                    save_patches(
+                        wsi_fp,
+                        coordinates,
+                        tissue_pct,
+                        level,
+                        region_size,
+                        resize_factor,
+                        patch_dir,
+                        backend="asap",
+                        nregion_max=nregion_max,
+                        num_workers=num_workers_preprocessing,
+                    )
         print("=+=" * 10)
 
     # wait for all processes to finish preprocessing
@@ -141,8 +192,7 @@ def run(args):
         print("=+=" * 10)
         # save output
         write_json_file(
-            location=OUTPUT_PATH / "overall-survival-years.json",
-            content=predictions[0]
+            location=OUTPUT_PATH / "overall-survival-years.json", content=predictions[0]
         )
         # print contents of output folder
         print("output folder contents:")
@@ -152,7 +202,7 @@ def run(args):
 
 
 def write_json_file(*, location, content):
-    with open(location, 'w') as f:
+    with open(location, "w") as f:
         f.write(json.dumps(content, indent=4))
 
 
@@ -168,14 +218,11 @@ def print_directory_contents(path):
 def _show_torch_cuda_info():
     print("=+=" * 10)
     print("Collecting Torch CUDA information")
-    print(
-        f"Torch CUDA is available: {(available := torch.cuda.is_available())}")
+    print(f"Torch CUDA is available: {(available := torch.cuda.is_available())}")
     if available:
         print(f"- number of devices: {torch.cuda.device_count()}")
-        print(
-            f"- current device: { (current_device := torch.cuda.current_device())}")
-        print(
-            f"- properties: {torch.cuda.get_device_properties(current_device).name}")
+        print(f"- current device: { (current_device := torch.cuda.current_device())}")
+        print(f"- properties: {torch.cuda.get_device_properties(current_device).name}")
     print("=+=" * 10)
 
 

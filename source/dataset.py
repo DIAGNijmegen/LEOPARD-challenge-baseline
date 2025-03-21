@@ -24,11 +24,20 @@ class PatchDataset(torch.utils.data.Dataset):
         wsi = wsd.WholeSlideImage(self.path, backend=self.backend)
         x, y, patch_size_resized, patch_level, resize_factor = self.coord[idx]
         patch_spacing = wsi.spacings[patch_level]
-        patch = wsi.get_patch(x, y, patch_size_resized, patch_size_resized, spacing=patch_spacing, center=False)
+        patch = wsi.get_patch(
+            x,
+            y,
+            patch_size_resized,
+            patch_size_resized,
+            spacing=patch_spacing,
+            center=False,
+        )
         pil_patch = Image.fromarray(patch).convert("RGB")
         if resize_factor != 1:
             patch_size = int(patch_size_resized / resize_factor)
-            assert patch_size_resized % patch_size == 0, f"width ({patch_size_resized}) is not divisible by region_size ({patch_size})"
+            assert (
+                patch_size_resized % patch_size == 0
+            ), f"width ({patch_size_resized}) is not divisible by region_size ({patch_size})"
             pil_patch = pil_patch.resize((patch_size, patch_size))
         if self.transforms is not None:
             img = self.transforms(pil_patch)

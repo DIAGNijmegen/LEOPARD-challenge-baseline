@@ -26,7 +26,7 @@ class WholeSlideImage(object):
         mask_path: Optional[Path] = None,
         spacing: Optional[float] = None,
         downsample: int = 64,
-        backend: str = "asap"
+        backend: str = "asap",
     ):
         """
         Args:
@@ -38,7 +38,7 @@ class WholeSlideImage(object):
         self.fmt = path.suffix
         self.wsi = wsd.WholeSlideImage(path, backend=backend)
 
-        self.spacing = spacing # manually set spacing at level 0
+        self.spacing = spacing  # manually set spacing at level 0
         self.spacings = self.get_spacings()
         self.level_dimensions = self.wsi.shapes
         self.level_downsamples = self.get_downsamples()
@@ -182,12 +182,28 @@ class WholeSlideImage(object):
         self,
         target_spacing,
         target_patch_size,
-        patching_params: Dict[str, int] = {"overlap": 0., "drop_holes": False, "tissue_thresh": 0.1, "use_padding": True},
-        filter_params: Dict[str, int] = {"ref_patch_size": 256, "a_t": 4, "a_h": 2, "max_n_holes": 8},
+        patching_params: Dict[str, int] = {
+            "overlap": 0.0,
+            "drop_holes": False,
+            "tissue_thresh": 0.1,
+            "use_padding": True,
+        },
+        filter_params: Dict[str, int] = {
+            "ref_patch_size": 256,
+            "a_t": 4,
+            "a_h": 2,
+            "max_n_holes": 8,
+        },
         num_workers: int = 1,
     ):
         contours, holes = self.detect_contours(target_spacing, filter_params)
-        running_x_coords, running_y_coords, tissue_percentages, patch_level, resize_factor = self.process_contours(
+        (
+            running_x_coords,
+            running_y_coords,
+            tissue_percentages,
+            patch_level,
+            resize_factor,
+        ) = self.process_contours(
             contours,
             holes,
             spacing=target_spacing,
@@ -202,7 +218,9 @@ class WholeSlideImage(object):
         return patch_coordinates, tissue_percentages, patch_level, resize_factor
 
     def detect_contours(
-        self, target_spacing: float, filter_params: Dict[str, int],
+        self,
+        target_spacing: float,
+        filter_params: Dict[str, int],
     ):
         def _filter_contours(contours, hierarchy, filter_params):
             """
@@ -342,27 +360,37 @@ class WholeSlideImage(object):
         ) as t:
             for i, cont in enumerate(t):
 
-                x_coords, y_coords, tissue_pct, cont_patch_level, cont_resize_factor = self.process_contour(
-                    cont,
-                    holes[i],
-                    spacing,
-                    patch_size,
-                    overlap,
-                    drop_holes,
-                    tissue_thresh,
-                    use_padding,
-                    num_workers=num_workers,
+                x_coords, y_coords, tissue_pct, cont_patch_level, cont_resize_factor = (
+                    self.process_contour(
+                        cont,
+                        holes[i],
+                        spacing,
+                        patch_size,
+                        overlap,
+                        drop_holes,
+                        tissue_thresh,
+                        use_padding,
+                        num_workers=num_workers,
+                    )
                 )
                 if len(x_coords) > 0:
                     if patch_level is not None:
-                        assert patch_level == cont_patch_level, "Patch level should be the same for all contours"
+                        assert (
+                            patch_level == cont_patch_level
+                        ), "Patch level should be the same for all contours"
                     patch_level = cont_patch_level
                     resize_factor = cont_resize_factor
                     running_x_coords.extend(x_coords)
                     running_y_coords.extend(y_coords)
                     running_tissue_pct.extend(tissue_pct)
 
-        return running_x_coords, running_y_coords, running_tissue_pct, patch_level, resize_factor
+        return (
+            running_x_coords,
+            running_y_coords,
+            running_tissue_pct,
+            patch_level,
+            resize_factor,
+        )
 
     def process_contour(
         self,
@@ -378,15 +406,15 @@ class WholeSlideImage(object):
         num_workers: int = 1,
     ):
 
-        patch_level, _ = self.get_best_level_for_spacing(
-            spacing, ignore_warning=True
-        )
+        patch_level, _ = self.get_best_level_for_spacing(spacing, ignore_warning=True)
 
         patch_spacing = self.get_level_spacing(patch_level)
         resize_factor = int(round(spacing / patch_spacing, 0))
 
-        if abs(resize_factor*patch_spacing/spacing - 1) > spacing_tol:
-            raise ValueError(f"ERROR: The natural spacing ({resize_factor*patch_spacing:.4f}) closest to the target spacing ({spacing:.4f}) was more than {spacing_tol*100}% apart.")
+        if abs(resize_factor * patch_spacing / spacing - 1) > spacing_tol:
+            raise ValueError(
+                f"ERROR: The natural spacing ({resize_factor*patch_spacing:.4f}) closest to the target spacing ({spacing:.4f}) was more than {spacing_tol*100}% apart."
+            )
 
         patch_size_resized = patch_size * resize_factor
         step_size = int(patch_size_resized * (1.0 - overlap))
@@ -463,7 +491,9 @@ class WholeSlideImage(object):
             filtered_coordinates = np.array(
                 [result[0] for result in results if result[0] is not None]
             )
-            filtered_tissue_percentages = [result[1] for result in results if result[0] is not None]
+            filtered_tissue_percentages = [
+                result[1] for result in results if result[0] is not None
+            ]
         else:
             coordinates = []
             tissue_percentages = []
@@ -476,14 +506,24 @@ class WholeSlideImage(object):
             filtered_coordinates = np.array(
                 [coordinate for coordinate in coordinates if coordinate is not None]
             )
-            filtered_tissue_percentages = [tissue_percentages[i] for i, coordinate in enumerate(coordinates) if coordinate is not None]
+            filtered_tissue_percentages = [
+                tissue_percentages[i]
+                for i, coordinate in enumerate(coordinates)
+                if coordinate is not None
+            ]
 
         npatch = len(filtered_coordinates)
 
         if npatch > 0:
             x_coords = list(filtered_coordinates[:, 0])
             y_coords = list(filtered_coordinates[:, 1])
-            return x_coords, y_coords, filtered_tissue_percentages, patch_level, resize_factor
+            return (
+                x_coords,
+                y_coords,
+                filtered_tissue_percentages,
+                patch_level,
+                resize_factor,
+            )
 
         else:
             return [], [], [], None, None

@@ -64,9 +64,11 @@ class FeatureExtractor(nn.Module):
     def forward(self, x):
         # x = [B, num_patches, 3, 224, 224]
         bs, num_patches = x.shape[0], x.shape[1]
-        x = x.reshape(bs*num_patches, *x.shape[2:])  # [B*num_patches, 3, 224, 224]
+        x = x.reshape(bs * num_patches, *x.shape[2:])  # [B*num_patches, 3, 224, 224]
         patch_feature = self.encoder(x).detach()  # [B*num_patches, out_features_dim]
-        patch_feature = patch_feature.reshape(bs, num_patches, -1) # [B, num_patches, out_features_dim]
+        patch_feature = patch_feature.reshape(
+            bs, num_patches, -1
+        )  # [B, num_patches, out_features_dim]
         return patch_feature
 
 
@@ -137,7 +139,9 @@ class UNI(FeatureExtractor):
             },
         }
         if patch_size == 256:
-            self.config["pretrained_cfg"]["crop_pct"] = 224 / 256  # ensure Resize is 256
+            self.config["pretrained_cfg"]["crop_pct"] = (
+                224 / 256
+            )  # ensure Resize is 256
         super(UNI, self).__init__(pretrained_weights)
         self.features_dim = 1024
 
@@ -146,25 +150,27 @@ class UNI(FeatureExtractor):
 
 
 class Kaiko(FeatureExtractor):
-    def __init__(self, pretrained_weights: str, region_size: int, patch_size: int = 256):
+    def __init__(
+        self, pretrained_weights: str, region_size: int, patch_size: int = 256
+    ):
         super(Kaiko, self).__init__(pretrained_weights, region_size, patch_size)
         self.features_dim = 768
 
     def build_encoder(self):
         pretrained_cfg = {
-            'tag': 'augreg2_in21k_ft_in1k',
-            'custom_load': False,
-            'input_size': [3, 224, 224],
-            'fixed_input_size': True,
-            'interpolation': 'bicubic',
-            'crop_pct': 0.9,
-            'crop_mode': 'center',
-            'mean': [0.5, 0.5, 0.5],
-            'std': [0.5, 0.5, 0.5],
-            'num_classes': 0,
-            'pool_size': None,
-            'first_conv': 'patch_embed.proj',
-            'classifier': 'head',
+            "tag": "augreg2_in21k_ft_in1k",
+            "custom_load": False,
+            "input_size": [3, 224, 224],
+            "fixed_input_size": True,
+            "interpolation": "bicubic",
+            "crop_pct": 0.9,
+            "crop_mode": "center",
+            "mean": [0.5, 0.5, 0.5],
+            "std": [0.5, 0.5, 0.5],
+            "num_classes": 0,
+            "pool_size": None,
+            "first_conv": "patch_embed.proj",
+            "classifier": "head",
         }
         return timm.create_model("vit_base_patch16_224", pretrained_cfg=pretrained_cfg)
 
@@ -200,7 +206,9 @@ class HierarchicalViT(nn.Module):
 
         # Global Aggregation
         self.global_phi = nn.Sequential(
-            nn.Linear(hidden_embed_dim, output_embed_dim), nn.ReLU(), nn.Dropout(dropout)
+            nn.Linear(hidden_embed_dim, output_embed_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
         )
 
         self.global_transformer = nn.TransformerEncoder(
@@ -217,7 +225,11 @@ class HierarchicalViT(nn.Module):
             L=output_embed_dim, D=output_embed_dim, dropout=dropout, num_classes=1
         )
         self.global_rho = nn.Sequential(
-            *[nn.Linear(output_embed_dim, output_embed_dim), nn.ReLU(), nn.Dropout(dropout)]
+            *[
+                nn.Linear(output_embed_dim, output_embed_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+            ]
         )
 
         self.classifier = nn.Linear(output_embed_dim, num_classes)
@@ -237,9 +249,13 @@ class HierarchicalViT(nn.Module):
                 register_tokens = mask_patch.new_ones(
                     (mask_patch.size(0), self.num_register_tokens_region)
                 )
-                mask_patch = torch.cat((cls_token, register_tokens, mask_patch), dim=1) # [M, num_patches+1+self.num_register_tokens_region]
+                mask_patch = torch.cat(
+                    (cls_token, register_tokens, mask_patch), dim=1
+                )  # [M, num_patches+1+self.num_register_tokens_region]
             else:
-                mask_patch = torch.cat((cls_token, mask_patch), dim=1)  # [M, num_patches+1]
+                mask_patch = torch.cat(
+                    (cls_token, mask_patch), dim=1
+                )  # [M, num_patches+1]
         # x = [M, 256, 384]
         x = self.vit(
             x.unfold(1, self.npatch, self.npatch).transpose(1, 2),
@@ -271,7 +287,9 @@ class HierarchicalViT(nn.Module):
                 print(f"Pretrained weights found at {self.pretrained_weights}")
                 print(msg)
         elif is_main_process():
-            print(f"{self.pretrained_weights} doesn't exist; please provide path to an existing file")
+            print(
+                f"{self.pretrained_weights} doesn't exist; please provide path to an existing file"
+            )
 
     def __repr__(self) -> str:
         num_params = 0
