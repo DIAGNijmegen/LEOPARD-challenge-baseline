@@ -157,7 +157,7 @@ def run(args):
     # instantiate feature aggregator(s)
     feature_aggregators = []
     feature_aggregator_dir = RESOURCE_PATH / "aggregators"
-    feature_aggregator_weights = [x for x in feature_aggregator_dir.glob("*.pt")]
+    feature_aggregator_weights = sorted([x for x in feature_aggregator_dir.glob("*.pt")])
     for weight_file in feature_aggregator_weights:
         agg = HierarchicalViT(
             weight_file,
